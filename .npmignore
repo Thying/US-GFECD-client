@@ -1,0 +1,10 @@
+src/
+.git/
+.github/
+node_modules/
+*.test.js
+*.spec.js
+.eslintrc.js
+jest.config.js
+rollup.config.js
+babel.config.js
