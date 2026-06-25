@@ -61,6 +61,13 @@ jobs:
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           npm version patch --no-git-tag-version
+          
+          # Коммитим изменения обратно в репозиторий
+          git add package.json package-lock.json
+          git commit -m "chore: bump version to $(node -p "require('./package.json').version") [skip ci]"
+          git push
+          
+          # Публикуем
           npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
