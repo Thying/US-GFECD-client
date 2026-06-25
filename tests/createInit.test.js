@@ -60,7 +60,6 @@ describe('createInit', () => {
 
     // Сначала инициализируем
     await init()(dispatch, getState)
-    // Потом чистим
     await clean()(dispatch, getState)
 
     // Проверяем, что save вызван с пустыми данными
