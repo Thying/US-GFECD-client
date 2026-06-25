@@ -1,2 +1,3 @@
-export { createSub } from './createSub';
-// позже добавим createMethod и createInit
+export { createInit } from './createInit'
+export { createMethod } from './createMethod'
+export { createSub } from './createSub'

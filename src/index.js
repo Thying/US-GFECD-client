@@ -1,3 +1,6 @@
-export { createSub } from './store/factories'
-export * from './store/registry'; // (для внутреннего использования, но можно не экспортировать)
+// Store
+export { createInit, createMethod, createSub } from './store/factories'
 export { createSocket, getSocket } from './store/socket'
+
+// Registry (внутреннее, для продвинутого использования)
+export * from './store/registry'
