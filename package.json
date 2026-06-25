@@ -1,6 +1,9 @@
 {
-  "name": "us-gfecd/client",
+  "name": "@us-gfecd/client",
   "version": "0.0.1-alpha.0",
+  "publishConfig": {
+    "access": "public"
+  },
   "description": "Client library for US-GFECD architecture",
   "main": "dist/index.cjs.js",
   "module": "dist/index.esm.js",
