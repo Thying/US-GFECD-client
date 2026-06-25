@@ -50,5 +50,8 @@
     "transformIgnorePatterns": [
       "/node_modules/(?!(socket.io-client|engine.io-client|@socket.io|@us_gfecd)/)"
     ]
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

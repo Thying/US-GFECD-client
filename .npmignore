@@ -1,6 +1,6 @@
 src/
-.git/
 .github/
+.git/
 node_modules/
 *.test.js
 *.spec.js
