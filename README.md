@@ -692,8 +692,3 @@ npm install @us-gfecd/client
 
 - **Библиотека:** [@us-gfecd/client](https://npmjs.com/package/@us-gfecd/client)
 - **Репозиторий:** [GitHub](https://github.com/Thying/US-GFECD-client)
-- **Документация:** [US-GFECD Architecture](https://github.com/Thying/US-GFECD)
-
----
-
-**Лицензия:** MIT
