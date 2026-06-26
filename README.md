@@ -8,7 +8,11 @@
 
 Аббревиатура расшифровывается как:
 
-- **US** — Universal System (клиентская часть: UI + Store)
+**Клиентская часть:**
+- **U** — UI (интерфейс)
+- **S** — Store (состояние + логика)
+
+**Серверная часть:**
 - **G** — Gate (входной адаптер сервера)
 - **F** — Flow (оркестрация сценариев)
 - **E** — Emit (исходящие события)
@@ -24,9 +28,9 @@
 
 ---
 
-# 📱 Клиент (US — Universal System)
+# 📱 Клиент (US — UI + Store)
 
-Клиентская часть состоит из двух основных компонентов: **UI** (интерфейс) и **Store** (состояние + логика).
+Клиентская часть состоит из двух компонентов: **UI** (интерфейс) и **Store** (состояние + логика).
 
 ## Структура клиента
 
@@ -38,8 +42,8 @@ src/
 │   ├── event/          # Подписки (createSub)
 │   └── method/         # Действия (createMethod)
 ├── ui/
-│   ├── view/           # Компоненты-читатели (useInit)
-│   ├── edit/           # Компоненты-писатели (method)
+│   ├── view/           # Компоненты-читатели
+│   ├── edit/           # Компоненты-писатели
 │   ├── widget/         # Группы view/edit
 │   └── page/           # Страницы
 └── index.js
@@ -131,9 +135,8 @@ export const createUser = createMethod({
 
 ```jsx
 // src/ui/view/UserListView.jsx
-import React from 'react'
+import React, { useEffect } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
-import { useInit } from '@us-gfecd/client'
 import { init, clean, selectors } from '../../store/init/userInit'
 
 export const UserListView = () => {
@@ -141,7 +144,10 @@ export const UserListView = () => {
   const users = useSelector(state => state.user.list)
   const { loading, error } = useSelector(selectors.selectState)
 
-  useInit(() => dispatch(init()), () => dispatch(clean()))
+  useEffect(() => {
+    dispatch(init())
+    return () => dispatch(clean())
+  }, [dispatch])
 
   if (loading) return <div>Loading...</div>
   if (error) return <div>Error: {error}</div>
@@ -201,21 +207,6 @@ createSub({
 
 **Возвращает:** thunk `(data) => dispatch => { ... }`
 
-### `useInit(init, clean, deps?)`
-
-Хук для управления жизненным циклом компонента.
-
-```js
-useInit(
-  () => dispatch(init()),
-  () => dispatch(clean())
-)
-```
-
-- Автоматически вызывает `init` при монтировании
-- Автоматически вызывает `clean` при размонтировании
-- `deps` — зависимости для `useEffect`
-
 ### `createSocket(config)`
 
 Создаёт экземпляр Socket.IO.
@@ -234,7 +225,7 @@ const socket = createSocket({
 ## Потоки данных на клиенте
 
 ### Инициализация
-1. View монтируется → `useInit` вызывает `init()`
+1. View монтируется → `useEffect` вызывает `init()`
 2. `init` проверяет флаги (`loading`, `initialized`)
 3. Если данные не загружены → `socket.emit(call)`
 4. Полученные данные сохраняются через `save`
@@ -253,7 +244,7 @@ const socket = createSocket({
 4. View перерисовывается
 
 ### Деинициализация
-1. View размонтируется → `useInit` вызывает `clean()`
+1. View размонтируется → `useEffect` вызывает `clean()`
 2. `clean` уменьшает счётчик подписчиков
 3. Если это последний компонент → отписка от событий + очистка данных
 
@@ -567,16 +558,18 @@ export const { init, clean, selectors } = createInit({
 
 ```jsx
 // src/ui/view/TodoListView.jsx
-import React from 'react'
+import React, { useEffect } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
-import { useInit } from '@us-gfecd/client'
 import { init, clean } from '../../store/init/todoInit'
 
 export const TodoListView = () => {
   const dispatch = useDispatch()
   const todos = useSelector(state => state.todo.list)
 
-  useInit(() => dispatch(init()), () => dispatch(clean()))
+  useEffect(() => {
+    dispatch(init())
+    return () => dispatch(clean())
+  }, [dispatch])
 
   return (
     <ul>
@@ -673,7 +666,7 @@ npm install @us-gfecd/client
 # 🎯 Золотые правила
 
 ## Клиент
-1. **View** — только читает, вызывает `useInit`
+1. **View** — только читает, вызывает `init` и `clean` через `useEffect`
 2. **Edit** — только пишет, вызывает `method`
 3. **Call** — вызывается только из `init` и `method`
 4. **Event** — вызывает только `update`-редьюсеры
