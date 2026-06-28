@@ -4,11 +4,12 @@ import { clearUnsubscribe, decrement, getUnsubscribe, increment, setUnsubscribe 
 let counter = 0
 
 /**
- * Создаёт thunk для инициализации данных.
+ * Создаёт thunk для инициализации с поддержкой комнат.
+ *
  * @param {Object} params
- * @param {string} params.call - имя события для получения данных
- * @param {Function} params.save - экшен для сохранения данных (actionCreator)
- * @param {Function} params.sub - подписка (результат createSub)
+ * @param {string} params.call - имя события для запроса данных
+ * @param {Function} params.save - экшен для сохранения данных
+ * @param {Object} params.sub - подписка (возврат createSub)
  * @param {Socket} params.socket - экземпляр сокета
  * @returns {Object} { init, clean, selectors, sliceName }
  */
@@ -17,40 +18,22 @@ export const createInit = ({ call, save, sub, socket }) => {
 
   const slice = createSlice({
     name: sliceName,
-    initialState: {
-      initialized: false,
-      loading: false,
-      error: null,
-    },
+    initialState: { initialized: false, loading: false, error: null },
     reducers: {
-      start: (state) => {
-        state.loading = true
-        state.error = null
-      },
-      success: (state) => {
-        state.loading = false
-        state.initialized = true
-      },
-      fail: (state, action) => {
-        state.loading = false
-        state.error = action.payload
-      },
-      reset: (state) => {
-        state.initialized = false
-        state.loading = false
-        state.error = null
-      },
+      start: (state) => { state.loading = true; state.error = null },
+      success: (state) => { state.loading = false; state.initialized = true },
+      fail: (state, action) => { state.loading = false; state.error = action.payload },
+      reset: (state) => { state.initialized = false; state.loading = false; state.error = null },
     },
   })
 
   const { start, success, fail, reset } = slice.actions
 
   // -----------------------------------------------------
-  // Init thunk
-  const initThunk = () => async (dispatch, getState) => {
+  // Init thunk (теперь принимает параметры)
+  const initThunk = (initParams = {}) => async (dispatch, getState) => {
     const state = getState()[sliceName]
     if (state.initialized || state.loading) {
-      // Увеличиваем счётчик, если уже загружено
       increment(sliceName)
       return
     }
@@ -59,13 +42,13 @@ export const createInit = ({ call, save, sub, socket }) => {
     increment(sliceName)
 
     try {
-      // 1. Запрос данных
+      // 1. Запрос данных — передаём параметры
       const data = await new Promise((resolve, reject) => {
         if (!socket) {
           reject(new Error('Socket not provided'))
           return
         }
-        socket.emit(call, (response) => {
+        socket.emit(call, initParams, (response) => {
           if (response && response.error) {
             reject(new Error(response.error))
           } else {
@@ -77,8 +60,8 @@ export const createInit = ({ call, save, sub, socket }) => {
       // 2. Сохранение данных
       dispatch(save(data))
 
-      // 3. Подписка на события
-      const unsubscribe = sub(dispatch)
+      // 3. Подписка на события с параметрами (для комнат)
+      const unsubscribe = sub.subscribe(dispatch, initParams)
       setUnsubscribe(sliceName, unsubscribe)
 
       dispatch(success())
@@ -96,15 +79,13 @@ export const createInit = ({ call, save, sub, socket }) => {
     const isLast = decrement(sliceName)
     if (!isLast) return
 
-    // Отписываемся
     const unsubscribe = getUnsubscribe(sliceName)
     if (unsubscribe) {
-      unsubscribe()
+      unsubscribe() // здесь будет выход из комнаты
       clearUnsubscribe(sliceName)
     }
 
-    // Очищаем данные (вызываем save с пустыми данными)
-    dispatch(save([]))
+    dispatch(save([])) // очищаем данные
     dispatch(reset())
   }
 

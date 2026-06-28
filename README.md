@@ -49,6 +49,8 @@ src/
 └── index.js
 ```
 
+---
+
 ## Быстрый старт
 
 ### 1. Установка
@@ -90,7 +92,7 @@ export const { setUsers, addUser, setLoading } = userSlice.actions
 export default userSlice.reducer
 ```
 
-### 4. Создайте Event (подписки)
+### 4. Создайте Event (подписки) с комнатами
 
 ```js
 // src/store/event/userEvent.js
@@ -98,22 +100,33 @@ import { createSub } from '@us-gfecd/client'
 import { addUser, setUsers } from '../state/userState'
 
 export const userSub = createSub({
+  // Глобальные события (без комнат)
   userCreated: addUser,
-  usersLoaded: setUsers
+  usersLoaded: setUsers,
+
+  // События с комнатами (точечные обновления)
+  userPageUpdated: {
+    room: 'user{id}',      // Шаблон: 'user123'
+    save: setCurrentUser
+  },
+  userPageDeleted: {
+    room: 'user{id}',
+    save: (state) => ({ ...state, currentUser: null })
+  }
 })
 ```
 
-### 5. Создайте Init (инициализация)
+### 5. Создайте Init (инициализация) с параметрами
 
 ```js
 // src/store/init/userInit.js
 import { createInit } from '@us-gfecd/client'
-import { setUsers, setLoading } from '../state/userState'
+import { setCurrentUser } from '../state/userState'
 import { userSub } from '../event/userEvent'
 
 export const { init, clean, selectors } = createInit({
-  call: 'getUsers',
-  save: setUsers,
+  call: 'user:getOne',
+  save: setCurrentUser,
   sub: userSub
 })
 ```
@@ -134,30 +147,31 @@ export const createUser = createMethod({
 ### 7. Используйте в компоненте
 
 ```jsx
-// src/ui/view/UserListView.jsx
+// src/ui/view/UserPage.jsx
 import React, { useEffect } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import { init, clean, selectors } from '../../store/init/userInit'
 
-export const UserListView = () => {
+export const UserPage = ({ userId }) => {
   const dispatch = useDispatch()
-  const users = useSelector(state => state.user.list)
+  const user = useSelector(state => state.user.current)
   const { loading, error } = useSelector(selectors.selectState)
 
   useEffect(() => {
-    dispatch(init())
+    // Передаём параметры в init — они используются для комнат
+    dispatch(init({ id: userId }))
     return () => dispatch(clean())
-  }, [dispatch])
+  }, [userId, dispatch])
 
   if (loading) return <div>Loading...</div>
   if (error) return <div>Error: {error}</div>
-  
+  if (!user) return <div>User not found</div>
+
   return (
-    <ul>
-      {users.map(user => (
-        <li key={user.id}>{user.name}</li>
-      ))}
-    </ul>
+    <div>
+      <h1>{user.name}</h1>
+      <p>Email: {user.email}</p>
+    </div>
   )
 }
 ```
@@ -168,33 +182,82 @@ export const UserListView = () => {
 
 ### `createInit({ call, save, sub })`
 
-Создаёт thunk для инициализации данных.
+Создаёт thunk для инициализации данных с поддержкой комнат.
 
 | Параметр | Тип | Описание |
 |----------|-----|----------|
 | `call` | `string` | Имя события Socket.IO для запроса данных |
 | `save` | `Function` | Экшен для сохранения данных |
-| `sub` | `Function` | Подписка (результат `createSub`) |
+| `sub` | `Object` | Подписка (результат `createSub`) |
 
 **Возвращает:** `{ init, clean, selectors }`
 
-- `init` — thunk для загрузки данных
-- `clean` — thunk для очистки данных и отписки
+- `init(params)` — thunk для загрузки данных. Параметры передаются в `call` и используются для подстановки в шаблоны комнат.
+- `clean()` — thunk для очистки данных и отписки (автоматически покидает комнату)
 - `selectors` — селекторы для чтения состояния (`selectState`, `selectLoading`, `selectError`, `selectInitialized`)
+
+**Пример с параметрами:**
+```js
+// В компоненте
+dispatch(init({ id: userId }))
+// Библиотека автоматически:
+// 1. Вызовет socket.emit('user:getOne', { id: userId })
+// 2. Подпишется на события и вступит в комнату 'user123'
+```
+
+---
 
 ### `createSub(handlers)`
 
-Создаёт подписку на события сервера.
+Создаёт подписку на события сервера с поддержкой комнат.
 
+**Форматы обработчиков:**
+
+1. **Глобальное событие** (без комнаты):
 ```js
 createSub({
   userCreated: addUser,
-  userDeleted: removeUser,
-  userUpdated: updateUser
+  usersLoaded: setUsers
 })
 ```
 
-**Возвращает:** функцию `subscribe(dispatch)`, которая возвращает `unsubscribe`
+2. **Событие с комнатой (статика):**
+```js
+createSub({
+  adminUpdated: {
+    room: 'admin',        // Всегда комната 'admin'
+    save: updateAdmin
+  }
+})
+```
+
+3. **Событие с параметризованной комнатой (шаблон):**
+```js
+createSub({
+  userPageUpdated: {
+    room: 'user{id}',     // 'user123' при init({ id: 123 })
+    save: updateUserPage
+  },
+  userPageDeleted: {
+    room: 'user{id}',
+    save: clearUserPage
+  },
+  // Несколько параметров
+  teamUpdated: {
+    room: 'team{teamId}/user{userId}', // 'team1/user42'
+    save: updateTeamUser
+  }
+})
+```
+
+**Подстановка параметров:**
+- `{id}` — заменяется на `params.id` из `init(params)`
+- `{userId}` — заменяется на `params.userId`
+- Если параметр отсутствует — подставляется пустая строка
+
+**Возвращает:** объект с методом `subscribe(dispatch, params)`, который возвращает `unsubscribe`
+
+---
 
 ### `createMethod({ call, save })`
 
@@ -206,6 +269,8 @@ createSub({
 | `save` | `Function` | Экшен для сохранения результата |
 
 **Возвращает:** thunk `(data) => dispatch => { ... }`
+
+---
 
 ### `createSocket(config)`
 
@@ -222,31 +287,82 @@ const socket = createSocket({
 
 ---
 
+## Комнаты (Rooms) — как это работает
+
+### Проблема
+Без комнат все клиенты получают все события. Если 100 клиентов смотрят 100 разных страниц, каждый получает обновления для всех страниц — это нагрузка и лишние обновления store.
+
+### Решение
+Используются **комнаты Socket.IO**. Клиент автоматически вступает в комнату при вызове `init({ id })` и покидает её при `clean()`.
+
+### Как это выглядит в коде
+
+**1. Описываем подписку с комнатой:**
+```js
+// store/event/userEvent.js
+export const userSub = createSub({
+  userPageUpdated: {
+    room: 'user{id}',
+    save: updateUserPage
+  }
+})
+```
+
+**2. Инициализируем с параметром:**
+```js
+// store/init/userInit.js
+export const { init, clean } = createInit({
+  call: 'user:getOne',
+  save: setUser,
+  sub: userSub
+})
+```
+
+**3. В компоненте:**
+```jsx
+useEffect(() => {
+  dispatch(init({ id: userId })) // Вступает в комнату 'user123'
+  return () => dispatch(clean())  // Покидает комнату 'user123'
+}, [userId])
+```
+
+**4. Сервер отправляет событие только в комнату:**
+```go
+// Go-сервер
+Server.BroadcastToRoom("/", "user123", "userPageUpdated", userData)
+```
+
+### Преимущества
+- ✅ Только нужные клиенты получают обновления
+- ✅ Меньше трафика и нагрузки
+- ✅ Автоматическое управление комнатами
+- ✅ Чистый код без ручных `join`/`leave`
+
+---
+
 ## Потоки данных на клиенте
 
-### Инициализация
-1. View монтируется → `useEffect` вызывает `init()`
+### Инициализация с комнатой
+1. View монтируется → `useEffect` вызывает `init({ id: userId })`
 2. `init` проверяет флаги (`loading`, `initialized`)
-3. Если данные не загружены → `socket.emit(call)`
+3. Если данные не загружены → `socket.emit('user:getOne', { id: userId })`
 4. Полученные данные сохраняются через `save`
-5. Активируется подписка `sub`
-6. View отображает данные
+5. Активируется подписка `sub.subscribe(dispatch, { id: userId })`
+6. Клиент **вступает в комнату** `user123`
+7. View отображает данные
 
-### Realtime обновление
-1. Сервер присылает событие (например, `userCreated`)
-2. `createSub` вызывает соответствующий экшен
+### Realtime обновление (только в комнате)
+1. Сервер присылает событие `userPageUpdated` в комнату `user123`
+2. `createSub` вызывает экшен `updateUserPage`
 3. Store обновляется → View перерисовывается
-
-### Действие пользователя
-1. Edit вызывает `method(data)`
-2. `method` отправляет запрос через `socket.emit(call, data)`
-3. Полученный ответ сохраняется через `save`
-4. View перерисовывается
+4. Другие клиенты (в других комнатах) событие не получают
 
 ### Деинициализация
 1. View размонтируется → `useEffect` вызывает `clean()`
 2. `clean` уменьшает счётчик подписчиков
-3. Если это последний компонент → отписка от событий + очистка данных
+3. Если это последний компонент → отписка от событий
+4. Клиент **покидает комнату** `user123`
+5. Данные очищаются
 
 ---
 
@@ -259,17 +375,17 @@ const socket = createSocket({
 ```
 server/
 ├── gate/           # Входной адаптер
-│   └── userGate.js
+│   └── userGate.go
 ├── flow/           # Оркестрация сценариев
-│   ├── userFlow.js
+│   ├── userFlow.go
 │   └── atomic/     # Атомарные сценарии
-│       └── checkAccessFlow.js
+│       └── checkAccessFlow.go
 ├── core/           # Бизнес-логика
-│   └── userCore.js
+│   └── userCore.go
 ├── db/             # Доступ к данным
-│   └── userDb.js
+│   └── userDb.go
 └── emit/           # Исходящие события
-    └── userEmit.js
+    └── userEmit.go
 ```
 
 ## Слои сервера
@@ -278,20 +394,28 @@ server/
 
 **Назначение:** принимает запросы, проверяет авторизацию, валидирует данные, вызывает ровно один Flow.
 
-**Пример:**
+**Пример (Go + Socket.IO):**
 
-```js
-// gate/userGate.js
-export const userGate = (socket) => {
-  socket.on('getUsers', async (_, callback) => {
-    // Проверка авторизации
-    // Вызов Flow
-    const users = await userFlow.getUsers(socket.userId)
-    callback(users)
+```go
+// gate/userGate.go
+func RegisterUserHandlers(s socketio.Conn) {
+  // Обработчик для вступления в комнаты
+  s.OnEvent("join", func(room string) {
+    s.Join(room)
   })
 
-  socket.on('createUser', async (data, callback) => {
-    const user = await userFlow.createUser(data)
+  // Обработчик для выхода из комнат
+  s.OnEvent("leave", func(room string) {
+    s.Leave(room)
+  })
+
+  // Запрос (init)
+  s.OnEvent("user:getOne", func(params map[string]string, callback func(interface{})) {
+    user, err := flow.GetUserByID(params["id"])
+    if err != nil {
+      callback(map[string]string{"error": err.Error()})
+      return
+    }
     callback(user)
   })
 }
@@ -301,6 +425,7 @@ export const userGate = (socket) => {
 - ✅ Вызывать Flow
 - ✅ Проверять авторизацию
 - ✅ Валидировать входные данные
+- ✅ Обрабатывать `join`/`leave` для комнат
 
 **Запрещено:**
 - ❌ Содержать бизнес-логику
@@ -315,50 +440,50 @@ export const userGate = (socket) => {
 
 **Пример обычного Flow:**
 
-```js
-// flow/userFlow.js
-import { checkAccessFlow } from './atomic/checkAccessFlow'
-import { userCore } from '../core/userCore'
-import { userDb } from '../db/userDb'
-import { userEmit } from '../emit/userEmit'
-
-export const userFlow = {
-  async createUser(data) {
-    // 1. Проверка прав
-    await checkAccessFlow(data.userId, 'createUser')
-    
-    // 2. Валидация данных
-    const validatedData = userCore.validateUser(data)
-    
-    // 3. Сохранение в БД
-    const user = await userDb.create(validatedData)
-    
-    // 4. Отправка события
-    userEmit.userCreated(user)
-    
-    return user
-  },
-
-  async getUsers() {
-    const users = await userDb.findAll()
-    return users
+```go
+// flow/userFlow.go
+func GetUserByID(id string) (*models.User, error) {
+  user, err := db.GetUserByID(id)
+  if err != nil {
+    return nil, err
   }
+  return user, nil
+}
+
+func CreateUser(data models.UserInput) (*models.User, error) {
+  // 1. Валидация
+  validated, err := core.ValidateUser(data)
+  if err != nil {
+    return nil, err
+  }
+
+  // 2. Сохранение в БД
+  user, err := db.CreateUser(validated)
+  if err != nil {
+    return nil, err
+  }
+
+  // 3. Отправка события в комнату
+  room := fmt.Sprintf("user:%s", user.ID)
+  emit.UserCreated(user, room)
+
+  return user, nil
 }
 ```
 
 **Атомарный Flow (не вызывает другие Flow):**
 
-```js
-// flow/atomic/checkAccessFlow.js
-import { userDb } from '../db/userDb'
-
-export const checkAccessFlow = async (userId, action) => {
-  const user = await userDb.findById(userId)
-  const hasAccess = user.roles.includes('admin')
-  if (!hasAccess) {
-    throw new Error('Access denied')
+```go
+// flow/atomic/checkAccessFlow.go
+func CheckAccessFlow(userId, action string) error {
+  user, err := db.GetUserByID(userId)
+  if err != nil {
+    return err
   }
-  return true
+  if !user.IsAdmin {
+    return errors.New("access denied")
+  }
+  return nil
 }
 ```
 
@@ -379,27 +504,20 @@ export const checkAccessFlow = async (userId, action) => {
 
 **Пример:**
 
-```js
-// core/userCore.js
-export const userCore = {
-  validateUser(data) {
-    if (!data.name || data.name.length < 2) {
-      throw new Error('Name is too short')
-    }
-    return { ...data, validated: true }
-  },
-
-  calculateAge(birthDate) {
-    return new Date().getFullYear() - new Date(birthDate).getFullYear()
-  },
-
-  formatUser(user) {
-    return {
-      id: user.id,
-      fullName: `${user.firstName} ${user.lastName}`,
-      age: this.calculateAge(user.birthDate)
-    }
+```go
+// core/userCore.go
+func ValidateUser(data UserInput) (UserInput, error) {
+  if len(data.Name) < 2 {
+    return data, errors.New("name is too short")
   }
+  if !strings.Contains(data.Email, "@") {
+    return data, errors.New("invalid email")
+  }
+  return data, nil
+}
+
+func CalculateAge(birthDate time.Time) int {
+  return time.Now().Year() - birthDate.Year()
 }
 ```
 
@@ -421,29 +539,24 @@ export const userCore = {
 
 **Пример:**
 
-```js
-// db/userDb.js
-import { db } from '../base/baseDb'
-
-export const userDb = {
-  async create(data) {
-    return db.user.create({ data })
-  },
-
-  async findAll() {
-    return db.user.findMany()
-  },
-
-  async findById(id) {
-    return db.user.findUnique({ where: { id } })
-  },
-
-  async isUserInRoom(userId, roomId) {
-    const membership = await db.membership.findFirst({
-      where: { userId, roomId }
-    })
-    return !!membership
+```go
+// db/userDb.go
+func GetUserByID(id string) (*models.User, error) {
+  var user models.User
+  err := DB.Where("id = ?", id).First(&user).Error
+  if errors.Is(err, gorm.ErrRecordNotFound) {
+    return nil, nil
   }
+  return &user, err
+}
+
+func CreateUser(data models.UserInput) (*models.User, error) {
+  user := models.User{
+    Name:  data.Name,
+    Email: data.Email,
+  }
+  err := DB.Create(&user).Error
+  return &user, err
 }
 ```
 
@@ -463,32 +576,34 @@ export const userDb = {
 
 **Назначение:** отправляет события клиентам через WebSocket.
 
-**Пример:**
+**Пример с комнатами:**
 
-```js
-// emit/userEmit.js
-export const userEmit = (io) => ({
-  userCreated(user) {
-    io.emit('userCreated', user)
-  },
-
-  userDeleted(userId) {
-    io.emit('userDeleted', userId)
-  },
-
-  userUpdated(user) {
-    io.emit('userUpdated', user)
-  },
-
-  notifyRoom(roomId, event, data) {
-    io.to(`room:${roomId}`).emit(event, data)
+```go
+// emit/userEmit.go
+func UserCreated(user *models.User, room string) {
+  if Server == nil {
+    log.Println("Socket.IO server not initialized")
+    return
   }
-})
+  data, _ := json.Marshal(user)
+  Server.BroadcastToRoom("/", room, "userPageUpdated", string(data))
+  log.Printf("📤 Emitted userPageUpdated to room: %s", room)
+}
+
+func UserDeleted(userID string) {
+  if Server == nil {
+    log.Println("Socket.IO server not initialized")
+    return
+  }
+  room := fmt.Sprintf("user:%s", userID)
+  Server.BroadcastToRoom("/", room, "userPageDeleted", "{}")
+  log.Printf("📤 Emitted userPageDeleted to room: %s", room)
+}
 ```
 
 **Разрешено:**
-- ✅ Отправлять события
-- ✅ Форматировать сообщения
+- ✅ Отправлять события в конкретные комнаты
+- ✅ Форматировать сообщения (JSON)
 - ✅ Обрабатывать acknowledgment
 
 **Запрещено:**
@@ -499,145 +614,187 @@ export const userEmit = (io) => ({
 
 ## Потоки данных на сервере
 
-### Запрос от клиента
-1. Gate принимает запрос
-2. Gate вызывает Flow
-3. Flow вызывает Core (валидация, расчёты)
-4. Flow вызывает Db (сохранение/чтение)
-5. Flow вызывает Emit (если нужно уведомить других)
-6. Ответ возвращается через Gate
+### Запрос от клиента с комнатой
+1. Клиент вызывает `init({ id: userId })` через Socket.IO
+2. Gate принимает запрос `user:getOne` с параметрами
+3. Gate вызывает Flow → Core (валидация) → Db (чтение)
+4. Ответ возвращается через callback
+5. Клиент **вступает в комнату** `user123`
 
-### Realtime событие
+### Обновление данных через Webhook
+1. Администратор изменяет данные через Directus
+2. Webhook отправляет POST-запрос на сервер
+3. Flow обрабатывает вебхук: загружает свежие данные из Db
+4. Emit отправляет событие в комнату `user123`
+5. Только клиенты в этой комнате получают обновление
+
+### Realtime событие от сервера
 1. Flow вызывает Emit
-2. Emit отправляет событие клиентам через WebSocket
+2. Emit отправляет событие в указанную комнату
+3. Клиенты в комнате получают событие и обновляют store
 
 ---
 
-# 🚀 Полный пример
+# 🚀 Полный пример (с комнатами)
 
 ## Клиент
 
 ```js
-// src/store/state/todoState.js
+// src/store/state/contestState.js
 import { createSlice } from '@reduxjs/toolkit'
 
-const todoSlice = createSlice({
-  name: 'todo',
-  initialState: { list: [] },
+const contestSlice = createSlice({
+  name: 'contest',
+  initialState: { currentPage: null, list: [] },
   reducers: {
-    setTodos: (state, action) => { state.list = action.payload },
-    addTodo: (state, action) => { state.list.push(action.payload) }
+    setContestPage: (state, action) => {
+      state.currentPage = action.payload
+    },
+    updateContestPage: (state, action) => {
+      state.currentPage = action.payload
+    },
+    clearContestPage: (state) => {
+      state.currentPage = null
+    },
+    updateContestInGallery: (state, action) => {
+      const idx = state.list.findIndex(c => c.id === action.payload.id)
+      if (idx !== -1) state.list[idx] = action.payload
+      else state.list.push(action.payload)
+    }
   }
 })
 
-export const { setTodos, addTodo } = todoSlice.actions
+export const {
+  setContestPage,
+  updateContestPage,
+  clearContestPage,
+  updateContestInGallery
+} = contestSlice.actions
 ```
 
 ```js
-// src/store/event/todoEvent.js
+// src/store/event/contestEvent.js
 import { createSub } from '@us-gfecd/client'
-import { addTodo } from '../state/todoState'
+import {
+  updateContestPage,
+  clearContestPage,
+  updateContestInGallery
+} from '../state/contestState'
 
-export const todoSub = createSub({
-  todoCreated: addTodo
+export const contestSub = createSub({
+  // Глобальные события
+  contestInGalleryUpdated: updateContestInGallery,
+
+  // События с комнатами
+  contestPageUpdated: {
+    room: 'contest{id}',
+    save: updateContestPage
+  },
+  contestPageDeleted: {
+    room: 'contest{id}',
+    save: clearContestPage
+  }
 })
 ```
 
 ```js
-// src/store/init/todoInit.js
+// src/store/init/contestInit.js
 import { createInit } from '@us-gfecd/client'
-import { setTodos } from '../state/todoState'
-import { todoSub } from '../event/todoEvent'
+import { setContestPage } from '../state/contestState'
+import { contestSub } from '../event/contestEvent'
 
 export const { init, clean, selectors } = createInit({
-  call: 'getTodos',
-  save: setTodos,
-  sub: todoSub
+  call: 'contest:getOne',
+  save: setContestPage,
+  sub: contestSub
 })
 ```
 
 ```jsx
-// src/ui/view/TodoListView.jsx
+// src/ui/view/ContestPage.jsx
 import React, { useEffect } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
-import { init, clean } from '../../store/init/todoInit'
+import { init, clean, selectors } from '../../store/init/contestInit'
 
-export const TodoListView = () => {
+export const ContestPage = ({ contestId }) => {
   const dispatch = useDispatch()
-  const todos = useSelector(state => state.todo.list)
+  const contest = useSelector(state => state.contest.currentPage)
+  const { loading, error } = useSelector(selectors.selectState)
 
   useEffect(() => {
-    dispatch(init())
-    return () => dispatch(clean())
-  }, [dispatch])
+    dispatch(init({ id: contestId })) // Вступает в комнату 'contest123'
+    return () => dispatch(clean())    // Покидает комнату
+  }, [contestId, dispatch])
+
+  if (loading) return <div>Loading...</div>
+  if (error) return <div>Error: {error}</div>
+  if (!contest) return <div>Contest not found</div>
 
   return (
-    <ul>
-      {todos.map(todo => (
-        <li key={todo.id}>{todo.text}</li>
-      ))}
-    </ul>
+    <div>
+      <h1>{contest.title}</h1>
+      <p>Status: {contest.status}</p>
+      <p>Start: {contest.start_date}</p>
+      <p>End: {contest.end_date}</p>
+    </div>
   )
 }
 ```
 
-## Сервер (Node.js + Socket.IO)
+## Сервер (Go)
 
-```js
-// server.js
-import { createServer } from 'http'
-import { Server } from 'socket.io'
-import { userGate } from './gate/userGate'
-import { todoGate } from './gate/todoGate'
-
-const httpServer = createServer()
-const io = new Server(httpServer, {
-  cors: { origin: '*' }
-})
-
-// Регистрация Gate
-io.on('connection', (socket) => {
-  userGate(socket)
-  todoGate(socket)
-})
-
-httpServer.listen(3000)
-```
-
-```js
-// gate/todoGate.js
-import { todoFlow } from '../flow/todoFlow'
-
-export const todoGate = (socket) => {
-  socket.on('getTodos', async (_, callback) => {
-    const todos = await todoFlow.getTodos()
-    callback(todos)
+```go
+// gate/contestGate.go
+func RegisterContestHandlers(s socketio.Conn) {
+  // Вступление в комнаты
+  s.OnEvent("join", func(room string) {
+    s.Join(room)
+    log.Printf("🔗 Client joined room: %s", room)
   })
 
-  socket.on('createTodo', async (data, callback) => {
-    const todo = await todoFlow.createTodo(data)
-    callback(todo)
+  s.OnEvent("leave", func(room string) {
+    s.Leave(room)
+    log.Printf("🔗 Client left room: %s", room)
+  })
+
+  // Запрос конкурса
+  s.OnEvent("contest:getOne", func(params map[string]string, callback func(interface{})) {
+    contest, err := flow.GetContestByID(params["id"])
+    if err != nil {
+      callback(map[string]string{"error": err.Error()})
+      return
+    }
+    callback(contest)
   })
 }
 ```
 
-```js
-// flow/todoFlow.js
-import { todoCore } from '../core/todoCore'
-import { todoDb } from '../db/todoDb'
-import { todoEmit } from '../emit/todoEmit'
+```go
+// flow/contestFlow.go
+func GetContestByID(id string) (*models.Contest, error) {
+  return db.GetContestByID(id)
+}
+```
 
-export const todoFlow = {
-  async getTodos() {
-    return todoDb.findAll()
-  },
-
-  async createTodo(data) {
-    const validated = todoCore.validateTodo(data)
-    const todo = await todoDb.create(validated)
-    todoEmit.todoCreated(todo)
-    return todo
+```go
+// emit/contestEmit.go
+func ContestPageUpdated(contest *models.Contest) {
+  if Server == nil {
+    return
   }
+  room := fmt.Sprintf("contest:%s", contest.ID)
+  data, _ := json.Marshal(contest)
+  Server.BroadcastToRoom("/", room, "contestPageUpdated", string(data))
+  log.Printf("📤 Emitted contestPageUpdated to room: %s", room)
+}
+
+func ContestPageDeleted(contestID string) {
+  if Server == nil {
+    return
+  }
+  room := fmt.Sprintf("contest:%s", contestID)
+  Server.BroadcastToRoom("/", room, "contestPageDeleted", "{}")
+  log.Printf("📤 Emitted contestPageDeleted to room: %s", room)
 }
 ```
 
@@ -670,14 +827,16 @@ npm install @us-gfecd/client
 2. **Edit** — только пишет, вызывает `method`
 3. **Call** — вызывается только из `init` и `method`
 4. **Event** — вызывает только `update`-редьюсеры
-5. Никакой бизнес-логики на клиенте
+5. **Комнаты** — автоматические, указываются через `{ room: 'entity{id}' }`
+6. Никакой бизнес-логики на клиенте
 
 ## Сервер
 1. **Gate** → один Flow
 2. **Flow** → Core + Db + Emit
 3. **Core** — только чистая логика
 4. **Db** — только данные
-5. **Emit** — только отправка
+5. **Emit** — только отправка, поддерживает комнаты
+6. **Комнаты** — используются для точечных обновлений
 
 ---
 
@@ -685,3 +844,8 @@ npm install @us-gfecd/client
 
 - **Библиотека:** [@us-gfecd/client](https://npmjs.com/package/@us-gfecd/client)
 - **Репозиторий:** [GitHub](https://github.com/Thying/US-GFECD-client)
+- **Документация:** [US-GFECD Architecture](https://github.com/Thying/US-GFECD)
+
+---
+
+**Лицензия:** MIT

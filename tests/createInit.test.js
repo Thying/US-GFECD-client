@@ -1,16 +1,15 @@
 import { createInit } from '../src/store/factories/createInit'
 
-// Мокаем socket
 const mockSocket = {
-  emit: jest.fn((event, callback) => {
+  emit: jest.fn((event, params, callback) => {
     callback([{ id: 1, name: 'Test' }])
-  })
+  }),
 }
 
-// Мокаем подписку
-const mockSub = jest.fn(() => jest.fn())
+const mockSub = {
+  subscribe: jest.fn(() => jest.fn()),
+}
 
-// Мокаем экшен для сохранения
 const save = jest.fn((data) => ({ type: 'SET_DATA', payload: data }))
 
 describe('createInit', () => {
@@ -19,7 +18,7 @@ describe('createInit', () => {
       call: 'test:init',
       save,
       sub: mockSub,
-      socket: mockSocket
+      socket: mockSocket,
     })
 
     expect(typeof init).toBe('function')
@@ -28,23 +27,24 @@ describe('createInit', () => {
     expect(sliceName).toBeDefined()
   })
 
-  it('should load data on init', async () => {
+  it('should load data on init with params', async () => {
     const { init, sliceName } = createInit({
       call: 'test:init',
       save,
       sub: mockSub,
-      socket: mockSocket
+      socket: mockSocket,
     })
 
     const dispatch = jest.fn()
     const getState = jest.fn().mockReturnValue({ [sliceName]: { initialized: false, loading: false } })
 
-    await init()(dispatch, getState)
+    const params = { id: 'test-id' }
+    await init(params)(dispatch, getState)
 
-    // Проверяем вызовы
-    expect(mockSocket.emit).toHaveBeenCalledWith('test:init', expect.any(Function))
+    // Проверяем вызов emit с параметрами
+    expect(mockSocket.emit).toHaveBeenCalledWith('test:init', params, expect.any(Function))
     expect(save).toHaveBeenCalledWith([{ id: 1, name: 'Test' }])
-    expect(mockSub).toHaveBeenCalled()
+    expect(mockSub.subscribe).toHaveBeenCalledWith(dispatch, params)
   })
 
   it('should clean data on clean', async () => {
@@ -52,15 +52,13 @@ describe('createInit', () => {
       call: 'test:init',
       save,
       sub: mockSub,
-      socket: mockSocket
+      socket: mockSocket,
     })
 
     const dispatch = jest.fn()
     const getState = jest.fn().mockReturnValue({ [sliceName]: { initialized: true, loading: false } })
 
-    // Сначала инициализируем
     await init()(dispatch, getState)
-    // Потом чистим
     await clean()(dispatch, getState)
 
     // Проверяем, что save вызван с пустыми данными

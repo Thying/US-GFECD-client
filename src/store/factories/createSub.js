@@ -1,31 +1,50 @@
+
 /**
- * Создаёт подписку на события сервера.
- * @param {Object} handlers - { 'eventName': actionCreator }
- * @param {Socket} socket - экземпляр сокета (опционально, если не передан, использует глобальный)
- * @returns {Function} subscribe(dispatch) => unsubscribe
+ * Создаёт подписку на события с поддержкой комнат.
+ *
+ * @param {Object} handlers - { 'eventName': saveAction | { room, save } }
+ * @param {Socket} socket - экземпляр сокета (опционально)
+ * @returns {Object} { subscribe(dispatch, params) => unsubscribe }
  */
 export const createSub = (handlers, socket) => {
-    return (dispatch) => {
-      const entries = Object.entries(handlers)
-      const boundHandlers = entries.map(([event, actionCreator]) => {
-        const handler = (data) => dispatch(actionCreator(data))
-        if (socket) {
-          socket.on(event, handler)
-        } else {
-          // если сокет не передан, предполагаем, что он уже создан где-то глобально
-          // но лучше явно передавать
-          console.warn('createSub: socket not provided, event not bound')
+  // Разбираем обработчики
+  const subscriptions = Object.entries(handlers).map(([event, config]) => {
+    const isGlobal = typeof config === 'function'
+    return {
+      event,
+      save: isGlobal ? config : config.save,
+      roomTemplate: isGlobal ? null : config.room || null, // строка с {id}
+    }
+  })
+
+  return {
+    subscribe: (dispatch, params = {}) => {
+      const entries = subscriptions.map(({ event, save, roomTemplate }) => {
+        const handler = (data) => dispatch(save(data))
+        socket.on(event, handler)
+
+        let room = null
+        if (roomTemplate) {
+          // Подставляем параметры в шаблон: 'contest{id}' → 'contest123'
+          room = roomTemplate.replace(/\{(\w+)\}/g, (_, key) => params[key] || '')
+          if (room) {
+            // Вступаем в комнату
+            socket.emit('join', room)
+          }
         }
-        return { event, handler }
+
+        return { event, handler, room }
       })
-  
+
       // Возвращаем функцию отписки
       return () => {
-        boundHandlers.forEach(({ event, handler }) => {
-          if (socket) {
-            socket.off(event, handler)
+        entries.forEach(({ event, handler, room }) => {
+          socket.off(event, handler)
+          if (room) {
+            socket.emit('leave', room)
           }
         })
       }
-    }
+    },
   }
+}
