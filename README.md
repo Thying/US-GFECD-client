@@ -1,3 +1,7 @@
+Обновлённый README с учётом нового правила: **Gate может вызывать несколько Flow**, когда это оправдано (например, для маршрутизации вебхуков). В остальных случаях рекомендуется один Gate → один Flow для поддержания читаемости.
+
+---
+
 # US-GFECD Architecture
 
 **US-GFECD** — это архитектурный подход для построения масштабируемых realtime-приложений с чётким разделением ответственности на клиенте и сервере.
@@ -392,37 +396,47 @@ server/
 
 ### Gate (входной адаптер)
 
-**Назначение:** принимает запросы, проверяет авторизацию, валидирует данные, вызывает ровно один Flow.
+**Назначение:** принимает запросы, проверяет авторизацию, валидирует входные данные.
 
-**Пример (Go + Socket.IO):**
+**Правила:**
+- Обычно Gate вызывает **один Flow** для конкретного запроса.
+- **Исключение:** Gate может вызывать **несколько Flow**, если это необходимо для маршрутизации (например, обработчик вебхуков, который направляет запросы к разным Flow в зависимости от типа данных). В таких случаях Gate выступает как диспетчер.
+- Для поддержания читаемости в сложных сценариях допускается вызов нескольких Flow из одного Gate.
+
+**Пример (один Gate → один Flow):**
 
 ```go
 // gate/userGate.go
-func RegisterUserHandlers(s socketio.Conn) {
-  // Обработчик для вступления в комнаты
-  s.OnEvent("join", func(room string) {
-    s.Join(room)
-  })
+func RegisterUserHandlers(server *socketio.Server) {
+    server.OnEvent("/", "user:getOne", func(s socketio.Conn, params map[string]string, callback func(interface{})) {
+        user, err := flow.GetUserByID(params["id"])
+        if err != nil {
+            callback(map[string]string{"error": err.Error()})
+            return
+        }
+        callback(user)
+    })
+}
+```
 
-  // Обработчик для выхода из комнат
-  s.OnEvent("leave", func(room string) {
-    s.Leave(room)
-  })
+**Пример (один Gate → несколько Flow — Webhook):**
 
-  // Запрос (init)
-  s.OnEvent("user:getOne", func(params map[string]string, callback func(interface{})) {
-    user, err := flow.GetUserByID(params["id"])
-    if err != nil {
-      callback(map[string]string{"error": err.Error()})
-      return
+```go
+// gate/webhookGate.go
+func WebhookHandler(w http.ResponseWriter, r *http.Request) {
+    // ... парсинг payload
+    switch payload.Collection {
+    case "contests":
+        flow.HandleContests(payload)   // вызов одного Flow
+    case "themes":
+        flow.HandleThemes(payload)     // вызов другого Flow
+    // ...
     }
-    callback(user)
-  })
 }
 ```
 
 **Разрешено:**
-- ✅ Вызывать Flow
+- ✅ Вызывать один или несколько Flow
 - ✅ Проверять авторизацию
 - ✅ Валидировать входные данные
 - ✅ Обрабатывать `join`/`leave` для комнат
@@ -443,31 +457,31 @@ func RegisterUserHandlers(s socketio.Conn) {
 ```go
 // flow/userFlow.go
 func GetUserByID(id string) (*models.User, error) {
-  user, err := db.GetUserByID(id)
-  if err != nil {
-    return nil, err
-  }
-  return user, nil
+    user, err := db.GetUserByID(id)
+    if err != nil {
+        return nil, err
+    }
+    return user, nil
 }
 
 func CreateUser(data models.UserInput) (*models.User, error) {
-  // 1. Валидация
-  validated, err := core.ValidateUser(data)
-  if err != nil {
-    return nil, err
-  }
+    // 1. Валидация
+    validated, err := core.ValidateUser(data)
+    if err != nil {
+        return nil, err
+    }
 
-  // 2. Сохранение в БД
-  user, err := db.CreateUser(validated)
-  if err != nil {
-    return nil, err
-  }
+    // 2. Сохранение в БД
+    user, err := db.CreateUser(validated)
+    if err != nil {
+        return nil, err
+    }
 
-  // 3. Отправка события в комнату
-  room := fmt.Sprintf("user:%s", user.ID)
-  emit.UserCreated(user, room)
+    // 3. Отправка события в комнату
+    room := fmt.Sprintf("user:%s", user.ID)
+    emit.UserCreated(user, room)
 
-  return user, nil
+    return user, nil
 }
 ```
 
@@ -476,14 +490,14 @@ func CreateUser(data models.UserInput) (*models.User, error) {
 ```go
 // flow/atomic/checkAccessFlow.go
 func CheckAccessFlow(userId, action string) error {
-  user, err := db.GetUserByID(userId)
-  if err != nil {
-    return err
-  }
-  if !user.IsAdmin {
-    return errors.New("access denied")
-  }
-  return nil
+    user, err := db.GetUserByID(userId)
+    if err != nil {
+        return err
+    }
+    if !user.IsAdmin {
+        return errors.New("access denied")
+    }
+    return nil
 }
 ```
 
@@ -507,17 +521,17 @@ func CheckAccessFlow(userId, action string) error {
 ```go
 // core/userCore.go
 func ValidateUser(data UserInput) (UserInput, error) {
-  if len(data.Name) < 2 {
-    return data, errors.New("name is too short")
-  }
-  if !strings.Contains(data.Email, "@") {
-    return data, errors.New("invalid email")
-  }
-  return data, nil
+    if len(data.Name) < 2 {
+        return data, errors.New("name is too short")
+    }
+    if !strings.Contains(data.Email, "@") {
+        return data, errors.New("invalid email")
+    }
+    return data, nil
 }
 
 func CalculateAge(birthDate time.Time) int {
-  return time.Now().Year() - birthDate.Year()
+    return time.Now().Year() - birthDate.Year()
 }
 ```
 
@@ -542,21 +556,21 @@ func CalculateAge(birthDate time.Time) int {
 ```go
 // db/userDb.go
 func GetUserByID(id string) (*models.User, error) {
-  var user models.User
-  err := DB.Where("id = ?", id).First(&user).Error
-  if errors.Is(err, gorm.ErrRecordNotFound) {
-    return nil, nil
-  }
-  return &user, err
+    var user models.User
+    err := DB.Where("id = ?", id).First(&user).Error
+    if errors.Is(err, gorm.ErrRecordNotFound) {
+        return nil, nil
+    }
+    return &user, err
 }
 
 func CreateUser(data models.UserInput) (*models.User, error) {
-  user := models.User{
-    Name:  data.Name,
-    Email: data.Email,
-  }
-  err := DB.Create(&user).Error
-  return &user, err
+    user := models.User{
+        Name:  data.Name,
+        Email: data.Email,
+    }
+    err := DB.Create(&user).Error
+    return &user, err
 }
 ```
 
@@ -581,23 +595,23 @@ func CreateUser(data models.UserInput) (*models.User, error) {
 ```go
 // emit/userEmit.go
 func UserCreated(user *models.User, room string) {
-  if Server == nil {
-    log.Println("Socket.IO server not initialized")
-    return
-  }
-  data, _ := json.Marshal(user)
-  Server.BroadcastToRoom("/", room, "userPageUpdated", string(data))
-  log.Printf("📤 Emitted userPageUpdated to room: %s", room)
+    if Server == nil {
+        log.Println("Socket.IO server not initialized")
+        return
+    }
+    data, _ := json.Marshal(user)
+    Server.BroadcastToRoom("/", room, "userPageUpdated", string(data))
+    log.Printf("📤 Emitted userPageUpdated to room: %s", room)
 }
 
 func UserDeleted(userID string) {
-  if Server == nil {
-    log.Println("Socket.IO server not initialized")
-    return
-  }
-  room := fmt.Sprintf("user:%s", userID)
-  Server.BroadcastToRoom("/", room, "userPageDeleted", "{}")
-  log.Printf("📤 Emitted userPageDeleted to room: %s", room)
+    if Server == nil {
+        log.Println("Socket.IO server not initialized")
+        return
+    }
+    room := fmt.Sprintf("user:%s", userID)
+    Server.BroadcastToRoom("/", room, "userPageDeleted", "{}")
+    log.Printf("📤 Emitted userPageDeleted to room: %s", room)
 }
 ```
 
@@ -624,9 +638,10 @@ func UserDeleted(userID string) {
 ### Обновление данных через Webhook
 1. Администратор изменяет данные через Directus
 2. Webhook отправляет POST-запрос на сервер
-3. Flow обрабатывает вебхук: загружает свежие данные из Db
-4. Emit отправляет событие в комнату `user123`
-5. Только клиенты в этой комнате получают обновление
+3. Gate (обработчик вебхука) определяет тип коллекции и вызывает соответствующий Flow
+4. Flow обрабатывает вебхук: загружает свежие данные из Db и вызывает Emit
+5. Emit отправляет событие в соответствующую комнату
+6. Только клиенты в этой комнате получают обновление
 
 ### Realtime событие от сервера
 1. Flow вызывает Emit
@@ -745,56 +760,56 @@ export const ContestPage = ({ contestId }) => {
 
 ```go
 // gate/contestGate.go
-func RegisterContestHandlers(s socketio.Conn) {
-  // Вступление в комнаты
-  s.OnEvent("join", func(room string) {
-    s.Join(room)
-    log.Printf("🔗 Client joined room: %s", room)
-  })
+func RegisterContestHandlers(server *socketio.Server) {
+    // Обработчик вступления в комнату
+    server.OnEvent("/", "join", func(s socketio.Conn, room string) {
+        s.Join(room)
+        log.Printf("🔗 Client joined room: %s", room)
+    })
 
-  s.OnEvent("leave", func(room string) {
-    s.Leave(room)
-    log.Printf("🔗 Client left room: %s", room)
-  })
+    server.OnEvent("/", "leave", func(s socketio.Conn, room string) {
+        s.Leave(room)
+        log.Printf("🔗 Client left room: %s", room)
+    })
 
-  // Запрос конкурса
-  s.OnEvent("contest:getOne", func(params map[string]string, callback func(interface{})) {
-    contest, err := flow.GetContestByID(params["id"])
-    if err != nil {
-      callback(map[string]string{"error": err.Error()})
-      return
-    }
-    callback(contest)
-  })
+    // Запрос конкурса
+    server.OnEvent("/", "contest:getOne", func(s socketio.Conn, params map[string]string, callback func(interface{})) {
+        contest, err := flow.GetContestByID(params["id"])
+        if err != nil {
+            callback(map[string]string{"error": err.Error()})
+            return
+        }
+        callback(contest)
+    })
 }
 ```
 
 ```go
 // flow/contestFlow.go
 func GetContestByID(id string) (*models.Contest, error) {
-  return db.GetContestByID(id)
+    return db.GetContestByID(id)
 }
 ```
 
 ```go
 // emit/contestEmit.go
 func ContestPageUpdated(contest *models.Contest) {
-  if Server == nil {
-    return
-  }
-  room := fmt.Sprintf("contest:%s", contest.ID)
-  data, _ := json.Marshal(contest)
-  Server.BroadcastToRoom("/", room, "contestPageUpdated", string(data))
-  log.Printf("📤 Emitted contestPageUpdated to room: %s", room)
+    if Server == nil {
+        return
+    }
+    room := fmt.Sprintf("contest:%s", contest.ID)
+    data, _ := json.Marshal(contest)
+    Server.BroadcastToRoom("/", room, "contestPageUpdated", string(data))
+    log.Printf("📤 Emitted contestPageUpdated to room: %s", room)
 }
 
 func ContestPageDeleted(contestID string) {
-  if Server == nil {
-    return
-  }
-  room := fmt.Sprintf("contest:%s", contestID)
-  Server.BroadcastToRoom("/", room, "contestPageDeleted", "{}")
-  log.Printf("📤 Emitted contestPageDeleted to room: %s", room)
+    if Server == nil {
+        return
+    }
+    room := fmt.Sprintf("contest:%s", contestID)
+    Server.BroadcastToRoom("/", room, "contestPageDeleted", "{}")
+    log.Printf("📤 Emitted contestPageDeleted to room: %s", room)
 }
 ```
 
@@ -831,8 +846,8 @@ npm install @us-gfecd/client
 6. Никакой бизнес-логики на клиенте
 
 ## Сервер
-1. **Gate** → один Flow
-2. **Flow** → Core + Db + Emit
+1. **Gate** → обычно один Flow, но может вызывать несколько для маршрутизации (например, вебхуки)
+2. **Flow** → Core + Db + Emit (может вызывать атомарные Flow)
 3. **Core** — только чистая логика
 4. **Db** — только данные
 5. **Emit** — только отправка, поддерживает комнаты
