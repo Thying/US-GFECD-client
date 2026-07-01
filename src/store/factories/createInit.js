@@ -103,5 +103,6 @@ export const createInit = ({ call, save, sub, socket }) => {
     clean: cleanThunk,
     selectors,
     sliceName,
+    slice,
   }
 }
