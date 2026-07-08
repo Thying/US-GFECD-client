@@ -1,3 +1,3 @@
-export { createInit } from './createInit'
-export { createMethod } from './createMethod'
-export { createSub } from './createSub'
+export { createSub } from './createSub';
+export { createMethod } from './createMethod';
+export { createEntity } from './createEntity'; 

@@ -1,7 +1,3 @@
-Обновлённый README с учётом нового правила: **Gate может вызывать несколько Flow**, когда это оправдано (например, для маршрутизации вебхуков). В остальных случаях рекомендуется один Gate → один Flow для поддержания читаемости.
-
----
-
 # US-GFECD Architecture
 
 **US-GFECD** — это архитектурный подход для построения масштабируемых realtime-приложений с чётким разделением ответственности на клиенте и сервере.
@@ -41,8 +37,7 @@
 ```
 src/
 ├── store/
-│   ├── state/          # Данные + экшены
-│   ├── init/           # Инициализация (createInit)
+│   ├── entity/         # Сущности (данные + инициализация) — createEntity
 │   ├── event/          # Подписки (createSub)
 │   └── method/         # Действия (createMethod)
 ├── ui/
@@ -52,6 +47,11 @@ src/
 │   └── page/           # Страницы
 └── index.js
 ```
+
+**Что изменилось:**
+- Раньше были отдельные папки `state/` и `init/`.
+- Теперь они объединены в `entity/` — одна сущность содержит и данные, и логику инициализации.
+- Больше не нужно регистрировать два отдельных слайса в store.
 
 ---
 
@@ -69,78 +69,66 @@ npm install @us-gfecd/client socket.io-client react-redux @reduxjs/toolkit
 npx us-gfecd init
 ```
 
-### 3. Создайте State (данные)
+### 3. Создайте Entity (данные + инициализация)
 
 ```js
-// src/store/state/userState.js
-import { createSlice } from '@reduxjs/toolkit'
+// src/store/entity/contestStatusEntity.js
+import { createEntity } from '@us-gfecd/client'
+import { contestStatusSub } from '../event/contestStatusEvent'
+import { socket } from '../index'
 
-const userSlice = createSlice({
-  name: 'user',
-  initialState: { list: [], loading: false },
-  reducers: {
-    setUsers: (state, action) => {
-      state.list = action.payload
-      state.loading = false
-    },
-    addUser: (state, action) => {
-      state.list.push(action.payload)
-    },
-    setLoading: (state) => {
-      state.loading = true
-    }
-  }
+const initialState = {
+  status: null,
+  start_date: null,
+  end_date: null,
+}
+
+const reducers = {
+  setContestStatus: (state, action) => {
+    const { status, start_date, end_date } = action.payload
+    state.status = status
+    state.start_date = start_date
+    state.end_date = end_date
+  },
+  clearContestStatus: (state) => {
+    state.status = null
+    state.start_date = null
+    state.end_date = null
+  },
+}
+
+export const contestStatus = createEntity({
+  name: 'contestStatus',
+  initialState,
+  reducers,
+  call: 'contest:getCurrentStatus',
+  sub: contestStatusSub,
+  save: reducers.setContestStatus,
+  socket,
 })
-
-export const { setUsers, addUser, setLoading } = userSlice.actions
-export default userSlice.reducer
 ```
 
 ### 4. Создайте Event (подписки) с комнатами
 
 ```js
-// src/store/event/userEvent.js
+// src/store/event/contestStatusEvent.js
 import { createSub } from '@us-gfecd/client'
-import { addUser, setUsers } from '../state/userState'
+import { contestStatus } from '../entity/contestStatusEntity'
 
-export const userSub = createSub({
-  // Глобальные события (без комнат)
-  userCreated: addUser,
-  usersLoaded: setUsers,
+const { setContestStatus, clearContestStatus } = contestStatus.actions
 
-  // События с комнатами (точечные обновления)
-  userPageUpdated: {
-    room: 'user{id}',      // Шаблон: 'user123'
-    save: setCurrentUser
-  },
-  userPageDeleted: {
-    room: 'user{id}',
-    save: (state) => ({ ...state, currentUser: null })
-  }
+export const contestStatusSub = createSub({
+  contestStatusUpdated: setContestStatus,
+  contestStatusDeleted: clearContestStatus,
 })
 ```
 
-### 5. Создайте Init (инициализация) с параметрами
-
-```js
-// src/store/init/userInit.js
-import { createInit } from '@us-gfecd/client'
-import { setCurrentUser } from '../state/userState'
-import { userSub } from '../event/userEvent'
-
-export const { init, clean, selectors } = createInit({
-  call: 'user:getOne',
-  save: setCurrentUser,
-  sub: userSub
-})
-```
-
-### 6. Создайте Method (действия)
+### 5. Создайте Method (действия)
 
 ```js
 // src/store/method/userMethod.js
 import { createMethod } from '@us-gfecd/client'
-import { addUser } from '../state/userState'
+import { addUser } from '../entity/userEntity'
 
 export const createUser = createMethod({
   call: 'createUser',
@@ -148,33 +136,50 @@ export const createUser = createMethod({
 })
 ```
 
+### 6. Подключите в store
+
+```js
+// src/store/configureStore.js
+import { configureStore } from '@reduxjs/toolkit'
+import { contestStatus } from './entity/contestStatusEntity'
+
+export const store = configureStore({
+  reducer: {
+    // Подключаем один reducer от createEntity
+    contestStatus: contestStatus.slice.reducer,
+  },
+})
+```
+
 ### 7. Используйте в компоненте
 
 ```jsx
-// src/ui/view/UserPage.jsx
+// src/ui/view/ContestStatusView.jsx
 import React, { useEffect } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
-import { init, clean, selectors } from '../../store/init/userInit'
+import { contestStatus } from '../../store/entity/contestStatusEntity'
 
-export const UserPage = ({ userId }) => {
+const { init, clean, selectors } = contestStatus
+
+export const ContestStatusView = () => {
   const dispatch = useDispatch()
-  const user = useSelector(state => state.user.current)
+  const data = useSelector(selectors.selectData)
   const { loading, error } = useSelector(selectors.selectState)
 
   useEffect(() => {
-    // Передаём параметры в init — они используются для комнат
-    dispatch(init({ id: userId }))
+    dispatch(init())
     return () => dispatch(clean())
-  }, [userId, dispatch])
+  }, [dispatch])
 
   if (loading) return <div>Loading...</div>
   if (error) return <div>Error: {error}</div>
-  if (!user) return <div>User not found</div>
+  if (!data) return <div>No data</div>
 
   return (
     <div>
-      <h1>{user.name}</h1>
-      <p>Email: {user.email}</p>
+      <p>Status: {data.status}</p>
+      <p>Start: {data.start_date}</p>
+      <p>End: {data.end_date}</p>
     </div>
   )
 }
@@ -184,25 +189,45 @@ export const UserPage = ({ userId }) => {
 
 ## API клиента
 
-### `createInit({ call, save, sub })`
+### `createEntity({ name, initialState, reducers, call, sub, save, socket })`
 
-Создаёт thunk для инициализации данных с поддержкой комнат.
+Создаёт сущность с состоянием, инициализацией и подписками — всё в одном.
 
 | Параметр | Тип | Описание |
 |----------|-----|----------|
+| `name` | `string` | Уникальное имя сущности (будет ключом в store) |
+| `initialState` | `Object` | Начальное состояние данных (без служебных полей) |
+| `reducers` | `Object` | Объект с редьюсерами для данных (экшены генерируются автоматически) |
 | `call` | `string` | Имя события Socket.IO для запроса данных |
-| `save` | `Function` | Экшен для сохранения данных |
 | `sub` | `Object` | Подписка (результат `createSub`) |
+| `save` | `Function` | Экшен для сохранения данных (из `reducers`) |
+| `socket` | `Socket` | Экземпляр сокета |
 
-**Возвращает:** `{ init, clean, selectors }`
+**Возвращает:** `{ slice, actions, init, clean, selectors }`
 
+- `slice` — готовый reducer для подключения в store (один!)
+- `actions` — все экшены (пользовательские + служебные)
 - `init(params)` — thunk для загрузки данных. Параметры передаются в `call` и используются для подстановки в шаблоны комнат.
 - `clean()` — thunk для очистки данных и отписки (автоматически покидает комнату)
-- `selectors` — селекторы для чтения состояния (`selectState`, `selectLoading`, `selectError`, `selectInitialized`)
+- `selectors` — селекторы для чтения состояния и флагов
+  - `selectData` — данные сущности
+  - `selectState` — всё состояние (данные + флаги)
+  - `selectLoading`, `selectError`, `selectInitialized`
 
-**Пример с параметрами:**
+**Пример с параметрами (для комнат):**
+
 ```js
-// В компоненте
+export const userEntity = createEntity({
+  name: 'user',
+  initialState: { current: null },
+  reducers: { setCurrentUser: (state, action) => { state.current = action.payload } },
+  call: 'user:getOne',
+  sub: userSub,
+  save: setCurrentUser,
+  socket,
+})
+
+// В компоненте:
 dispatch(init({ id: userId }))
 // Библиотека автоматически:
 // 1. Вызовет socket.emit('user:getOne', { id: userId })
@@ -218,6 +243,7 @@ dispatch(init({ id: userId }))
 **Форматы обработчиков:**
 
 1. **Глобальное событие** (без комнаты):
+
 ```js
 createSub({
   userCreated: addUser,
@@ -226,6 +252,7 @@ createSub({
 ```
 
 2. **Событие с комнатой (статика):**
+
 ```js
 createSub({
   adminUpdated: {
@@ -236,6 +263,7 @@ createSub({
 ```
 
 3. **Событие с параметризованной комнатой (шаблон):**
+
 ```js
 createSub({
   userPageUpdated: {
@@ -246,7 +274,6 @@ createSub({
     room: 'user{id}',
     save: clearUserPage
   },
-  // Несколько параметров
   teamUpdated: {
     room: 'team{teamId}/user{userId}', // 'team1/user42'
     save: updateTeamUser
@@ -294,14 +321,17 @@ const socket = createSocket({
 ## Комнаты (Rooms) — как это работает
 
 ### Проблема
+
 Без комнат все клиенты получают все события. Если 100 клиентов смотрят 100 разных страниц, каждый получает обновления для всех страниц — это нагрузка и лишние обновления store.
 
 ### Решение
+
 Используются **комнаты Socket.IO**. Клиент автоматически вступает в комнату при вызове `init({ id })` и покидает её при `clean()`.
 
 ### Как это выглядит в коде
 
 **1. Описываем подписку с комнатой:**
+
 ```js
 // store/event/userEvent.js
 export const userSub = createSub({
@@ -312,18 +342,26 @@ export const userSub = createSub({
 })
 ```
 
-**2. Инициализируем с параметром:**
+**2. Создаём сущность с параметрами:**
+
 ```js
-// store/init/userInit.js
-export const { init, clean } = createInit({
+// store/entity/userEntity.js
+export const userEntity = createEntity({
+  name: 'user',
+  initialState: { current: null },
+  reducers: { setUser: (state, action) => { state.current = action.payload } },
   call: 'user:getOne',
+  sub: userSub,
   save: setUser,
-  sub: userSub
+  socket,
 })
 ```
 
 **3. В компоненте:**
+
 ```jsx
+const { init, clean } = userEntity
+
 useEffect(() => {
   dispatch(init({ id: userId })) // Вступает в комнату 'user123'
   return () => dispatch(clean())  // Покидает комнату 'user123'
@@ -331,12 +369,14 @@ useEffect(() => {
 ```
 
 **4. Сервер отправляет событие только в комнату:**
+
 ```go
 // Go-сервер
 Server.BroadcastToRoom("/", "user123", "userPageUpdated", userData)
 ```
 
 ### Преимущества
+
 - ✅ Только нужные клиенты получают обновления
 - ✅ Меньше трафика и нагрузки
 - ✅ Автоматическое управление комнатами
@@ -347,6 +387,7 @@ Server.BroadcastToRoom("/", "user123", "userPageUpdated", userData)
 ## Потоки данных на клиенте
 
 ### Инициализация с комнатой
+
 1. View монтируется → `useEffect` вызывает `init({ id: userId })`
 2. `init` проверяет флаги (`loading`, `initialized`)
 3. Если данные не загружены → `socket.emit('user:getOne', { id: userId })`
@@ -356,17 +397,39 @@ Server.BroadcastToRoom("/", "user123", "userPageUpdated", userData)
 7. View отображает данные
 
 ### Realtime обновление (только в комнате)
+
 1. Сервер присылает событие `userPageUpdated` в комнату `user123`
 2. `createSub` вызывает экшен `updateUserPage`
 3. Store обновляется → View перерисовывается
 4. Другие клиенты (в других комнатах) событие не получают
 
 ### Деинициализация
+
 1. View размонтируется → `useEffect` вызывает `clean()`
 2. `clean` уменьшает счётчик подписчиков
 3. Если это последний компонент → отписка от событий
 4. Клиент **покидает комнату** `user123`
 5. Данные очищаются
+
+---
+
+# 📦 Библиотека
+
+## Установка
+
+```bash
+npm install @us-gfecd/client
+```
+
+## Peer зависимости
+
+```json
+"peerDependencies": {
+  "react": ">=18.0.0",
+  "react-redux": ">=8.0.0",
+  "socket.io-client": ">=4.5.0"
+}
+```
 
 ---
 
