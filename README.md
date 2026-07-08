@@ -435,7 +435,7 @@ npm install @us-gfecd/client
 
 # 🖥️ Сервер (GFECD)
 
-Серверная часть построена на микросервисной архитектуре с чёткими слоями.
+Серверная часть реализована на **Go** с использованием библиотеки **`github.com/zishang520/socket.io`** — это современная реализация Socket.IO v4, обеспечивающая полную совместимость с клиентской библиотекой `socket.io-client` v4 и поддержку комнат, широковещательных рассылок, автоматического переподключения и других фич протокола.
 
 ## Структура сервера
 
@@ -470,8 +470,10 @@ server/
 
 ```go
 // gate/userGate.go
-func RegisterUserHandlers(server *socketio.Server) {
-    server.OnEvent("/", "user:getOne", func(s socketio.Conn, params map[string]string, callback func(interface{})) {
+import "github.com/zishang520/socket.io/socket"
+
+func RegisterUserHandlers(server *socket.Server) {
+    server.OnEvent("/", "user:getOne", func(s socket.Conn, params map[string]string, callback func(interface{})) {
         user, err := flow.GetUserByID(params["id"])
         if err != nil {
             callback(map[string]string{"error": err.Error()})
@@ -657,23 +659,26 @@ func CreateUser(data models.UserInput) (*models.User, error) {
 
 ```go
 // emit/userEmit.go
+import "github.com/zishang520/socket.io/socket"
+
 func UserCreated(user *models.User, room string) {
     if Server == nil {
         log.Println("Socket.IO server not initialized")
         return
     }
-    data, _ := json.Marshal(user)
-    Server.BroadcastToRoom("/", room, "userPageUpdated", string(data))
+    Server.To(socket.Room(room)).Emit("userPageUpdated", user)
     log.Printf("📤 Emitted userPageUpdated to room: %s", room)
 }
 
 func UserDeleted(userID string) {
     if Server == nil {
-        log.Println("Socket.IO server not initialized")
         return
     }
     room := fmt.Sprintf("user:%s", userID)
-    Server.BroadcastToRoom("/", room, "userPageDeleted", "{}")
+    Server.To(socket.Room(room)).Emit("userPageDeleted", map[string]interface{}{
+        "id":       userID,
+        "_deleted": true,
+    })
     log.Printf("📤 Emitted userPageDeleted to room: %s", room)
 }
 ```
@@ -713,178 +718,17 @@ func UserDeleted(userID string) {
 
 ---
 
-# 🚀 Полный пример (с комнатами)
+## Золотые правила сервера
 
-## Клиент
-
-```js
-// src/store/state/contestState.js
-import { createSlice } from '@reduxjs/toolkit'
-
-const contestSlice = createSlice({
-  name: 'contest',
-  initialState: { currentPage: null, list: [] },
-  reducers: {
-    setContestPage: (state, action) => {
-      state.currentPage = action.payload
-    },
-    updateContestPage: (state, action) => {
-      state.currentPage = action.payload
-    },
-    clearContestPage: (state) => {
-      state.currentPage = null
-    },
-    updateContestInGallery: (state, action) => {
-      const idx = state.list.findIndex(c => c.id === action.payload.id)
-      if (idx !== -1) state.list[idx] = action.payload
-      else state.list.push(action.payload)
-    }
-  }
-})
-
-export const {
-  setContestPage,
-  updateContestPage,
-  clearContestPage,
-  updateContestInGallery
-} = contestSlice.actions
-```
-
-```js
-// src/store/event/contestEvent.js
-import { createSub } from '@us-gfecd/client'
-import {
-  updateContestPage,
-  clearContestPage,
-  updateContestInGallery
-} from '../state/contestState'
-
-export const contestSub = createSub({
-  // Глобальные события
-  contestInGalleryUpdated: updateContestInGallery,
-
-  // События с комнатами
-  contestPageUpdated: {
-    room: 'contest{id}',
-    save: updateContestPage
-  },
-  contestPageDeleted: {
-    room: 'contest{id}',
-    save: clearContestPage
-  }
-})
-```
-
-```js
-// src/store/init/contestInit.js
-import { createInit } from '@us-gfecd/client'
-import { setContestPage } from '../state/contestState'
-import { contestSub } from '../event/contestEvent'
-
-export const { init, clean, selectors } = createInit({
-  call: 'contest:getOne',
-  save: setContestPage,
-  sub: contestSub
-})
-```
-
-```jsx
-// src/ui/view/ContestPage.jsx
-import React, { useEffect } from 'react'
-import { useDispatch, useSelector } from 'react-redux'
-import { init, clean, selectors } from '../../store/init/contestInit'
-
-export const ContestPage = ({ contestId }) => {
-  const dispatch = useDispatch()
-  const contest = useSelector(state => state.contest.currentPage)
-  const { loading, error } = useSelector(selectors.selectState)
-
-  useEffect(() => {
-    dispatch(init({ id: contestId })) // Вступает в комнату 'contest123'
-    return () => dispatch(clean())    // Покидает комнату
-  }, [contestId, dispatch])
-
-  if (loading) return <div>Loading...</div>
-  if (error) return <div>Error: {error}</div>
-  if (!contest) return <div>Contest not found</div>
-
-  return (
-    <div>
-      <h1>{contest.title}</h1>
-      <p>Status: {contest.status}</p>
-      <p>Start: {contest.start_date}</p>
-      <p>End: {contest.end_date}</p>
-    </div>
-  )
-}
-```
-
-## Сервер (Go)
-
-```go
-// gate/contestGate.go
-func RegisterContestHandlers(server *socketio.Server) {
-    // Обработчик вступления в комнату
-    server.OnEvent("/", "join", func(s socketio.Conn, room string) {
-        s.Join(room)
-        log.Printf("🔗 Client joined room: %s", room)
-    })
-
-    server.OnEvent("/", "leave", func(s socketio.Conn, room string) {
-        s.Leave(room)
-        log.Printf("🔗 Client left room: %s", room)
-    })
-
-    // Запрос конкурса
-    server.OnEvent("/", "contest:getOne", func(s socketio.Conn, params map[string]string, callback func(interface{})) {
-        contest, err := flow.GetContestByID(params["id"])
-        if err != nil {
-            callback(map[string]string{"error": err.Error()})
-            return
-        }
-        callback(contest)
-    })
-}
-```
-
-```go
-// flow/contestFlow.go
-func GetContestByID(id string) (*models.Contest, error) {
-    return db.GetContestByID(id)
-}
-```
-
-```go
-// emit/contestEmit.go
-func ContestPageUpdated(contest *models.Contest) {
-    if Server == nil {
-        return
-    }
-    room := fmt.Sprintf("contest:%s", contest.ID)
-    data, _ := json.Marshal(contest)
-    Server.BroadcastToRoom("/", room, "contestPageUpdated", string(data))
-    log.Printf("📤 Emitted contestPageUpdated to room: %s", room)
-}
-
-func ContestPageDeleted(contestID string) {
-    if Server == nil {
-        return
-    }
-    room := fmt.Sprintf("contest:%s", contestID)
-    Server.BroadcastToRoom("/", room, "contestPageDeleted", "{}")
-    log.Printf("📤 Emitted contestPageDeleted to room: %s", room)
-}
-```
-
----
+1. **Gate** → обычно один Flow, но может вызывать несколько для маршрутизации (например, вебхуки)
+2. **Flow** → Core + Db + Emit (может вызывать атомарные Flow)
+3. **Core** — только чистая логика
+4. **Db** — только данные
+5. **Emit** — только отправка, поддерживает комнаты
+6. **Комнаты** — используются для точечных обновлений
+7. **Никаких обходов слоёв** — Gate не вызывает Core напрямую, Flow не импортирует Gate и т.д.
 
 # 📦 Библиотека
-
-## Установка
-
-```bash
-npm install @us-gfecd/client
-```
 
 ## Peer зависимости
 
@@ -903,10 +747,9 @@ npm install @us-gfecd/client
 ## Клиент
 1. **View** — только читает, вызывает `init` и `clean` через `useEffect`
 2. **Edit** — только пишет, вызывает `method`
-3. **Call** — вызывается только из `init` и `method`
-4. **Event** — вызывает только `update`-редьюсеры
-5. **Комнаты** — автоматические, указываются через `{ room: 'entity{id}' }`
-6. Никакой бизнес-логики на клиенте
+3. **Event** — вызывает только `update`-редьюсеры
+4. **Комнаты** — автоматические, указываются через `{ room: 'entity{id}' }`
+5. Никакой бизнес-логики на клиенте
 
 ## Сервер
 1. **Gate** → обычно один Flow, но может вызывать несколько для маршрутизации (например, вебхуки)
@@ -921,9 +764,3 @@ npm install @us-gfecd/client
 # 📚 Ссылки
 
 - **Библиотека:** [@us-gfecd/client](https://npmjs.com/package/@us-gfecd/client)
-- **Репозиторий:** [GitHub](https://github.com/Thying/US-GFECD-client)
-- **Документация:** [US-GFECD Architecture](https://github.com/Thying/US-GFECD)
-
----
-
-**Лицензия:** MIT
