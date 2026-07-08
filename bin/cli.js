@@ -8,10 +8,9 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 const STRUCTURE = {
-  'src/store/state': '// state files here',
-  'src/store/init': '// init files here',
-  'src/store/event': '// event files here',
-  'src/store/method': '// method files here',
+  'src/store/entity': '// entity files here (data + init)',
+  'src/store/event': '// event subscriptions here',
+  'src/store/method': '// methods here',
   'src/ui/view': '// view components here',
   'src/ui/edit': '// edit components here',
   'src/ui/widget': '// widget components here',
@@ -26,8 +25,7 @@ export * from './ui'
 `,
   'src/store/index.js': `
 // Store exports
-export * from './state'
-export * from './init'
+export * from './entity'
 export * from './event'
 export * from './method'
 `,
@@ -38,23 +36,19 @@ export * from './edit'
 export * from './widget'
 export * from './page'
 `,
-  'src/store/state/index.js': `
-// Export your state slices here
+  'src/store/entity/index.js': `
+// Export your entities here (createEntity)
 // Example:
-// export { default as user } from './userState'
-`,
-  'src/store/init/index.js': `
-// Export your init functions here
-// Example:
-// export { initUsers, cleanUsers, selectors } from './userInit'
+// export { userEntity } from './userEntity'
+// export { contestEntity } from './contestEntity'
 `,
   'src/store/event/index.js': `
-// Export your event subscriptions here
+// Export your event subscriptions here (createSub)
 // Example:
 // export { userSub } from './userEvent'
 `,
   'src/store/method/index.js': `
-// Export your methods here
+// Export your methods here (createMethod)
 // Example:
 // export { createUser } from './userMethod'
 `,
@@ -108,11 +102,10 @@ const createStructure = () => {
 
   console.log('\n🎉 US-GFECD structure created successfully!')
   console.log('\nNext steps:')
-  console.log('  1. Create your state slices in src/store/state/')
-  console.log('  2. Create init functions in src/store/init/')
-  console.log('  3. Create event subscriptions in src/store/event/')
-  console.log('  4. Create methods in src/store/method/')
-  console.log('  5. Create UI components in src/ui/')
+  console.log('  1. Create entities (data + init) in src/store/entity/')
+  console.log('  2. Create event subscriptions in src/store/event/')
+  console.log('  3. Create methods in src/store/method/')
+  console.log('  4. Create UI components in src/ui/')
 }
 
 // Запуск

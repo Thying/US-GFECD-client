@@ -59,10 +59,6 @@ src/
 
 ### 1. Установка
 
-```bash
-npm install @us-gfecd/client socket.io-client react-redux @reduxjs/toolkit
-```
-
 ### 2. Инициализация структуры
 
 ```bash
