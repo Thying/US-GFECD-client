@@ -42,7 +42,7 @@ jobs:
     needs: build-and-test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     permissions:
-      contents: write  # <--- Нужно для push
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -58,18 +58,7 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Bump version and publish
-        run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          npm version patch --no-git-tag-version
-          
-          # Коммитим изменения обратно в репозиторий
-          git add package.json package-lock.json
-          git commit -m "chore: bump version to $(node -p "require('./package.json').version") [skip ci]"
-          git push
-          
-          # Публикуем
-          npm publish --access public
+      - name: Publish to npm
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
