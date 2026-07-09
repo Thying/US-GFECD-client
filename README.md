@@ -37,8 +37,9 @@
 ```
 src/
 ├── store/
-│   ├── entity/         # Сущности (данные + инициализация) — createEntity
-│   ├── event/          # Подписки (createSub)
+│   ├── state/          # Данные и редьюсеры (без логики инициализации)
+│   ├── entity/         # Объединение данных, инициализации и подписки
+│   ├── event/          # Подписки на события (createSub)
 │   └── method/         # Действия (createMethod)
 ├── ui/
 │   ├── view/           # Компоненты-читатели
@@ -49,9 +50,10 @@ src/
 ```
 
 **Что изменилось:**
-- Раньше были отдельные папки `state/` и `init/`.
-- Теперь они объединены в `entity/` — одна сущность содержит и данные, и логику инициализации.
-- Больше не нужно регистрировать два отдельных слайса в store.
+- Раньше `state/` и `init/` были отдельными папками, а в store регистрировались два слайса.
+- Теперь `state/` содержит только `initialState` и `reducers` (чистые данные).
+- `entity/` объединяет данные, логику инициализации (`createEntity`) и подписку — в store регистрируется **один** слайс.
+- `event/` использует экшены из `entity`, а не наоборот — циклических зависимостей нет.
 
 ---
 
@@ -59,27 +61,27 @@ src/
 
 ### 1. Установка
 
+```bash
+npm install @us-gfecd/client socket.io-client react-redux @reduxjs/toolkit
+```
+
 ### 2. Инициализация структуры
 
 ```bash
 npx us-gfecd init
 ```
 
-### 3. Создайте Entity (данные + инициализация)
+### 3. Создайте State (данные и редьюсеры)
 
 ```js
-// src/store/entity/contestStatusEntity.js
-import { createEntity } from '@us-gfecd/client'
-import { contestStatusSub } from '../event/contestStatusEvent'
-import { socket } from '../index'
-
-const initialState = {
+// src/store/state/contestStatusState.js
+export const initialState = {
   status: null,
   start_date: null,
   end_date: null,
 }
 
-const reducers = {
+export const reducers = {
   setContestStatus: (state, action) => {
     const { status, start_date, end_date } = action.payload
     state.status = status
@@ -92,6 +94,32 @@ const reducers = {
     state.end_date = null
   },
 }
+```
+
+### 4. Создайте Event (подписки)
+
+```js
+// src/store/event/contestStatusEvent.js
+import { createSub } from '@us-gfecd/client'
+import { reducers } from '../state/contestStatusState'
+import { socket } from '../index'
+
+const { setContestStatus, clearContestStatus } = reducers
+
+export const contestStatusSub = createSub({
+  contestStatusUpdated: setContestStatus,
+  contestStatusDeleted: clearContestStatus,
+}, socket)
+```
+
+### 5. Создайте Entity (объединяет всё)
+
+```js
+// src/store/entity/contestStatusEntity.js
+import { createEntity } from '@us-gfecd/client'
+import { initialState, reducers } from '../state/contestStatusState'
+import { contestStatusSub } from '../event/contestStatusEvent'
+import { socket } from '../index'
 
 export const contestStatus = createEntity({
   name: 'contestStatus',
@@ -104,22 +132,7 @@ export const contestStatus = createEntity({
 })
 ```
 
-### 4. Создайте Event (подписки) с комнатами
-
-```js
-// src/store/event/contestStatusEvent.js
-import { createSub } from '@us-gfecd/client'
-import { contestStatus } from '../entity/contestStatusEntity'
-
-const { setContestStatus, clearContestStatus } = contestStatus.actions
-
-export const contestStatusSub = createSub({
-  contestStatusUpdated: setContestStatus,
-  contestStatusDeleted: clearContestStatus,
-})
-```
-
-### 5. Создайте Method (действия)
+### 6. Создайте Method (действия)
 
 ```js
 // src/store/method/userMethod.js
@@ -128,11 +141,11 @@ import { addUser } from '../entity/userEntity'
 
 export const createUser = createMethod({
   call: 'createUser',
-  save: addUser
+  save: addUser,
 })
 ```
 
-### 6. Подключите в store
+### 7. Подключите в store (один слайс!)
 
 ```js
 // src/store/configureStore.js
@@ -141,13 +154,12 @@ import { contestStatus } from './entity/contestStatusEntity'
 
 export const store = configureStore({
   reducer: {
-    // Подключаем один reducer от createEntity
     contestStatus: contestStatus.slice.reducer,
   },
 })
 ```
 
-### 7. Используйте в компоненте
+### 8. Используйте в компоненте
 
 ```jsx
 // src/ui/view/ContestStatusView.jsx
@@ -205,8 +217,8 @@ export const ContestStatusView = () => {
 - `actions` — все экшены (пользовательские + служебные)
 - `init(params)` — thunk для загрузки данных. Параметры передаются в `call` и используются для подстановки в шаблоны комнат.
 - `clean()` — thunk для очистки данных и отписки (автоматически покидает комнату)
-- `selectors` — селекторы для чтения состояния и флагов
-  - `selectData` — данные сущности
+- `selectors` — мемоизированные селекторы для чтения состояния и флагов
+  - `selectData` — данные сущности (объект)
   - `selectState` — всё состояние (данные + флаги)
   - `selectLoading`, `selectError`, `selectInitialized`
 

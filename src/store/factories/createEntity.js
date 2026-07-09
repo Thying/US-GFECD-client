@@ -1,9 +1,9 @@
-import { createSlice } from '@reduxjs/toolkit';
+import { createSlice, createSelector } from '@reduxjs/toolkit';
 import { increment, decrement, setUnsubscribe, getUnsubscribe, clearUnsubscribe } from '../registry';
 
 /**
  * Создаёт сущность с состоянием, инициализацией и подписками.
- * 
+ *
  * @param {Object} params
  * @param {string} params.name - уникальное имя сущности (будет ключом в store)
  * @param {Object} params.initialState - начальное состояние данных (без служебных полей)
@@ -121,13 +121,30 @@ export const createEntity = ({ name, initialState, reducers, call, sub, save, so
   };
 
   // -----------------------------------------------------
-  // Selectors
+  // Мемоизированные селекторы
+  const selectSelf = (state) => state[name];
+
   const selectors = {
-    selectData: (state) => state[name],
-    selectState: (state) => state[name],
-    selectLoading: (state) => state[name].loading,
-    selectInitialized: (state) => state[name].initialized,
-    selectError: (state) => state[name].error,
+    selectData: createSelector(
+      [selectSelf],
+      (data) => data
+    ),
+    selectState: createSelector(
+      [selectSelf],
+      (data) => data
+    ),
+    selectLoading: createSelector(
+      [selectSelf],
+      (data) => data.loading
+    ),
+    selectError: createSelector(
+      [selectSelf],
+      (data) => data.error
+    ),
+    selectInitialized: createSelector(
+      [selectSelf],
+      (data) => data.initialized
+    ),
   };
 
   return {

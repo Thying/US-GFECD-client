@@ -8,9 +8,10 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 const STRUCTURE = {
-  'src/store/entity': '// entity files here (data + init)',
-  'src/store/event': '// event subscriptions here',
-  'src/store/method': '// methods here',
+  'src/store/state': '// state files here (initialState + reducers)',
+  'src/store/event': '// event files here (createSub)',
+  'src/store/entity': '// entity files here (createEntity)',
+  'src/store/method': '// method files here (createMethod)',
   'src/ui/view': '// view components here',
   'src/ui/edit': '// edit components here',
   'src/ui/widget': '// widget components here',
@@ -25,8 +26,9 @@ export * from './ui'
 `,
   'src/store/index.js': `
 // Store exports
-export * from './entity'
+export * from './state'
 export * from './event'
+export * from './entity'
 export * from './method'
 `,
   'src/ui/index.js': `
@@ -36,41 +38,45 @@ export * from './edit'
 export * from './widget'
 export * from './page'
 `,
-  'src/store/entity/index.js': `
-// Export your entities here (createEntity)
+  'src/store/state/index.js': `
+// Export your state files (initialState + reducers)
 // Example:
-// export { userEntity } from './userEntity'
-// export { contestEntity } from './contestEntity'
+// export * from './contestStatusState'
 `,
   'src/store/event/index.js': `
-// Export your event subscriptions here (createSub)
+// Export your event subscriptions
 // Example:
-// export { userSub } from './userEvent'
+// export { contestStatusSub } from './contestStatusEvent'
+`,
+  'src/store/entity/index.js': `
+// Export your entities
+// Example:
+// export { contestStatus } from './contestStatusEntity'
 `,
   'src/store/method/index.js': `
-// Export your methods here (createMethod)
+// Export your methods
 // Example:
 // export { createUser } from './userMethod'
 `,
   'src/ui/view/index.js': `
-// Export your view components here
+// Export your view components
 // Example:
-// export { UserListView } from './UserListView'
+// export { ContestStatusView } from './ContestStatusView'
 `,
   'src/ui/edit/index.js': `
-// Export your edit components here
+// Export your edit components
 // Example:
 // export { CreateUserForm } from './CreateUserForm'
 `,
   'src/ui/widget/index.js': `
-// Export your widgets here
+// Export your widgets
 // Example:
 // export { UserWidget } from './UserWidget'
 `,
   'src/ui/page/index.js': `
-// Export your pages here
+// Export your pages
 // Example:
-// export { UsersPage } from './UsersPage'
+// export { MainPage } from './MainPage'
 `,
 }
 
@@ -102,10 +108,11 @@ const createStructure = () => {
 
   console.log('\n🎉 US-GFECD structure created successfully!')
   console.log('\nNext steps:')
-  console.log('  1. Create entities (data + init) in src/store/entity/')
-  console.log('  2. Create event subscriptions in src/store/event/')
-  console.log('  3. Create methods in src/store/method/')
-  console.log('  4. Create UI components in src/ui/')
+  console.log('  1. Create state files in src/store/state/ (initialState + reducers)')
+  console.log('  2. Create event subscriptions in src/store/event/ (createSub)')
+  console.log('  3. Create entities in src/store/entity/ (createEntity)')
+  console.log('  4. Create methods in src/store/method/ (createMethod)')
+  console.log('  5. Create UI components in src/ui/')
 }
 
 // Запуск
