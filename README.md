@@ -53,7 +53,8 @@ src/
 - Раньше `state/` и `init/` были отдельными папками, а в store регистрировались два слайса.
 - Теперь `state/` содержит только `initialState` и `reducers` (чистые данные).
 - `entity/` объединяет данные, логику инициализации (`createEntity`) и подписку — в store регистрируется **один** слайс.
-- `event/` использует экшены из `entity`, а не наоборот — циклических зависимостей нет.
+- `event/` использует экшены из `entity`, а не наоборот — циклических зависимотив нет.
+- `method/` использует экшены из `entity.actions`, но не использует reducers напрямую.
 
 ---
 
@@ -91,29 +92,12 @@ export const reducers = {
 }
 ```
 
-### 4. Создайте Event (подписки)
-
-```js
-// src/store/event/contestStatusEvent.js
-import { createSub } from '@us-gfecd/client'
-import { reducers } from '../state/contestStatusState'
-import { socket } from '../index'
-
-const { setContestStatus, clearContestStatus } = reducers
-
-export const contestStatusSub = createSub({
-  contestStatusUpdated: setContestStatus,
-  contestStatusDeleted: clearContestStatus,
-}, socket)
-```
-
-### 5. Создайте Entity (объединяет всё)
+### 4. Создайте Entity (инициализация и состояние)
 
 ```js
 // src/store/entity/contestStatusEntity.js
 import { createEntity } from '@us-gfecd/client'
 import { initialState, reducers } from '../state/contestStatusState'
-import { contestStatusSub } from '../event/contestStatusEvent'
 import { socket } from '../index'
 
 export const contestStatus = createEntity({
@@ -121,10 +105,27 @@ export const contestStatus = createEntity({
   initialState,
   reducers,
   call: 'contest:getCurrentStatus',
-  sub: contestStatusSub,
-  save: 'setContestStatus',
+  save: 'setContestStatus', // имя экшена из reducers
   socket,
 })
+```
+
+### 5. Создайте Event (подписки) и привяжите к Entity
+
+```js
+// src/store/event/contestStatusEvent.js
+import { createSub } from '@us-gfecd/client'
+import { contestStatus } from '../entity/contestStatusEntity'
+import { socket } from '../index'
+
+export const contestStatusSub = createSub(
+  {
+    contestStatusUpdated: 'setContestStatus',   // строка — имя экшена из entity
+    contestStatusDeleted: 'clearContestStatus',
+  },
+  contestStatus,  // передаём entity
+  socket
+)
 ```
 
 ### 6. Создайте Method (действия)
@@ -132,17 +133,15 @@ export const contestStatus = createEntity({
 ```js
 // src/store/method/userMethod.js
 import { createMethod } from '@us-gfecd/client'
-import { reducers } from '../state/userState'
+import { userEntity } from '../entity/userEntity'
 
-// Экшены из state используются как для инициализации (в entity), так и для методов
-const { addUser } = reducers
+const { addUser } = userEntity.actions  // экшены из entity
 
 export const createUser = createMethod({
   call: 'createUser',
-  save: addUser,
+  save: addUser,   // экшен-криэйтор
 })
 ```
-
 
 ### 7. Подключите в store (один слайс!)
 
@@ -196,21 +195,18 @@ export const ContestStatusView = () => {
 
 ## API клиента
 
-### `createEntity({ name, initialState, reducers, call, sub, save, socket })`
+### `createEntity({ name, initialState, reducers, call, save, socket })`
 
 Создаёт сущность с состоянием, инициализацией и подписками — всё в одном.
 
 | Параметр | Тип | Описание |
 |----------|-----|----------|
-| `name` | `string` | Уникальное имя сущности (будет ключом в store) |
+| `name` | `string` | Уникальное имя сущности (ключ в store) |
 | `initialState` | `Object` | Начальное состояние данных (без служебных полей) |
 | `reducers` | `Object` | Объект с редьюсерами для данных (экшены генерируются автоматически) |
 | `call` | `string` | Имя события Socket.IO для запроса данных |
-| `sub` | `Object` | Подписка (результат `createSub`) |
-| `save` | `string ` | Имя экшена из reducers, которое будет вызвано для сохранения данных (например, 'setData') |
+| `save` | `string` | Имя экшена из `reducers`, который будет вызван для сохранения данных (например, `'setData'`) |
 | `socket` | `Socket` | Экземпляр сокета |
-
-Важно: Параметр save должен быть строкой, соответствующей имени одного из редьюсеров, переданных в reducers. Библиотека автоматически найдёт нужный экшен-криэйтор и использует его для сохранения данных после успешной загрузки.
 
 **Возвращает:** `{ slice, actions, init, clean, selectors }`
 
@@ -218,36 +214,37 @@ export const ContestStatusView = () => {
 - `actions` — все экшены (пользовательские + служебные)
 - `init(params)` — thunk для загрузки данных. Параметры передаются в `call` и используются для подстановки в шаблоны комнат.
 - `clean()` — thunk для очистки данных и отписки (автоматически покидает комнату)
-- `selectors` — мемоизированные селекторы для чтения состояния и флагов
-  - `selectData` — данные сущности (объект)
+- `selectors` — мемоизированные селекторы:
+  - `selectData` — данные сущности
   - `selectState` — всё состояние (данные + флаги)
   - `selectLoading`, `selectError`, `selectInitialized`
 
-**Пример с параметрами (для комнат):**
+**Пример:**
 
 ```js
-export const userEntity = createEntity({
+const userEntity = createEntity({
   name: 'user',
   initialState: { current: null },
   reducers: { setCurrentUser: (state, action) => { state.current = action.payload } },
   call: 'user:getOne',
-  sub: userSub,
-  save: setCurrentUser,
+  save: 'setCurrentUser',
   socket,
 })
-
-// В компоненте:
-dispatch(init({ id: userId }))
-// Библиотека автоматически:
-// 1. Вызовет socket.emit('user:getOne', { id: userId })
-// 2. Подпишется на события и вступит в комнату 'user123'
 ```
 
 ---
 
-### `createSub(handlers)`
+### `createSub(handlers, entity, socket)`
 
-Создаёт подписку на события сервера с поддержкой комнат.
+Создаёт подписку на события сервера, привязанную к конкретной сущности.
+
+| Параметр | Тип | Описание |
+|----------|-----|----------|
+| `handlers` | `Object` | Объект, где ключ — имя события, значение — экшен (или строка с именем экшена из `entity.actions`) или объект `{ room, save }`. |
+| `entity` | `Object` | Сущность, созданная через `createEntity` (должна содержать `actions`). |
+| `socket` | `Socket` | Экземпляр сокета. |
+
+**Возвращает:** объект с методом `subscribe(dispatch, params)`, который возвращает `unsubscribe`.
 
 **Форматы обработчиков:**
 
@@ -255,9 +252,9 @@ dispatch(init({ id: userId }))
 
 ```js
 createSub({
-  userCreated: addUser,
-  usersLoaded: setUsers
-})
+  userCreated: 'addUser',   // строка — имя экшена из entity.actions
+  usersLoaded: 'setUsers',
+}, userEntity, socket)
 ```
 
 2. **Событие с комнатой (статика):**
@@ -265,10 +262,10 @@ createSub({
 ```js
 createSub({
   adminUpdated: {
-    room: 'admin',        // Всегда комната 'admin'
-    save: updateAdmin
-  }
-})
+    room: 'admin',
+    save: 'updateAdmin',
+  },
+}, userEntity, socket)
 ```
 
 3. **Событие с параметризованной комнатой (шаблон):**
@@ -276,26 +273,17 @@ createSub({
 ```js
 createSub({
   userPageUpdated: {
-    room: 'user{id}',     // 'user123' при init({ id: 123 })
-    save: updateUserPage
+    room: 'user{id}',
+    save: 'setCurrentUser',
   },
   userPageDeleted: {
     room: 'user{id}',
-    save: clearUserPage
+    save: 'clearCurrentUser',
   },
-  teamUpdated: {
-    room: 'team{teamId}/user{userId}', // 'team1/user42'
-    save: updateTeamUser
-  }
-})
+}, userEntity, socket)
 ```
 
-**Подстановка параметров:**
-- `{id}` — заменяется на `params.id` из `init(params)`
-- `{userId}` — заменяется на `params.userId`
-- Если параметр отсутствует — подставляется пустая строка
-
-**Возвращает:** объект с методом `subscribe(dispatch, params)`, который возвращает `unsubscribe`
+Подстановка параметров работает аналогично `createEntity`.
 
 ---
 
@@ -306,9 +294,21 @@ createSub({
 | Параметр | Тип | Описание |
 |----------|-----|----------|
 | `call` | `string` | Имя события Socket.IO |
-| `save` | `Function` | Экшен для сохранения результата |
+| `save` | `Function` | Экшен-криэйтор (из `entity.actions`) |
 
 **Возвращает:** thunk `(data) => dispatch => { ... }`
+
+**Пример:**
+
+```js
+import { userEntity } from '../entity/userEntity'
+const { addUser } = userEntity.actions
+
+export const createUser = createMethod({
+  call: 'createUser',
+  save: addUser,
+})
+```
 
 ---
 
@@ -321,7 +321,7 @@ import { createSocket } from '@us-gfecd/client'
 
 const socket = createSocket({
   url: 'https://api.example.com',
-  autoConnect: true
+  autoConnect: true,
 })
 ```
 
@@ -346,22 +346,20 @@ const socket = createSocket({
 export const userSub = createSub({
   userPageUpdated: {
     room: 'user{id}',
-    save: updateUserPage
-  }
-})
+    save: 'setCurrentUser',
+  },
+}, userEntity, socket)
 ```
 
 **2. Создаём сущность с параметрами:**
 
 ```js
-// store/entity/userEntity.js
 export const userEntity = createEntity({
   name: 'user',
   initialState: { current: null },
-  reducers: { setUser: (state, action) => { state.current = action.payload } },
+  reducers: { setCurrentUser: (state, action) => { state.current = action.payload } },
   call: 'user:getOne',
-  sub: userSub,
-  save: setUser,
+  save: 'setCurrentUser',
   socket,
 })
 ```
@@ -381,7 +379,7 @@ useEffect(() => {
 
 ```go
 // Go-сервер
-Server.BroadcastToRoom("/", "user123", "userPageUpdated", userData)
+Server.To(socket.Room("user123")).Emit("userPageUpdated", userData)
 ```
 
 ### Преимущества
@@ -408,7 +406,7 @@ Server.BroadcastToRoom("/", "user123", "userPageUpdated", userData)
 ### Realtime обновление (только в комнате)
 
 1. Сервер присылает событие `userPageUpdated` в комнату `user123`
-2. `createSub` вызывает экшен `updateUserPage`
+2. `createSub` вызывает экшен `setCurrentUser`
 3. Store обновляется → View перерисовывается
 4. Другие клиенты (в других комнатах) событие не получают
 

@@ -2,7 +2,6 @@ import { createEntity } from '../src/store/factories/createEntity';
 import { getRegistry } from '../src/store/registry';
 
 describe('createEntity', () => {
-  // Сбрасываем registry перед каждым тестом
   beforeEach(() => {
     const reg = getRegistry();
     reg.counters = {};
@@ -16,11 +15,6 @@ describe('createEntity', () => {
     }),
   };
 
-  const mockSub = {
-    subscribe: jest.fn(() => jest.fn()),
-  };
-
-  // Определяем редьюсеры
   const reducers = {
     setData: (state, action) => {
       state.list = action.payload;
@@ -35,8 +29,7 @@ describe('createEntity', () => {
       initialState,
       reducers,
       call: 'test:get',
-      sub: mockSub,
-      save: 'setData', // <-- строка — имя экшена
+      save: 'setData',
       socket: mockSocket,
     });
 
@@ -53,7 +46,6 @@ describe('createEntity', () => {
       initialState,
       reducers,
       call: 'test:get',
-      sub: mockSub,
       save: 'setData',
       socket: mockSocket,
     });
@@ -65,12 +57,11 @@ describe('createEntity', () => {
 
     expect(mockSocket.emit).toHaveBeenCalledWith('test:get', expect.any(Function));
 
-    // Проверяем, что экшен setData был вызван с правильным payload
     const setDataAction = dispatch.mock.calls.find(call => call[0].type === 'test/setData');
     expect(setDataAction).toBeDefined();
     expect(setDataAction[0].payload).toEqual([{ id: 1, name: 'Test' }]);
 
-    expect(mockSub.subscribe).toHaveBeenCalled();
+    // В новой версии createEntity не использует sub, поэтому проверяем только dispatch
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'test/start' }));
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'test/success' }));
   });
@@ -81,7 +72,6 @@ describe('createEntity', () => {
       initialState,
       reducers,
       call: 'test:get',
-      sub: mockSub,
       save: 'setData',
       socket: mockSocket,
     });
@@ -98,7 +88,6 @@ describe('createEntity', () => {
     expect(setDataAction).toBeDefined();
     expect(setDataAction[0].payload).toEqual([{ id: 1, name: 'Test' }]);
 
-    expect(mockSub.subscribe).toHaveBeenCalledWith(dispatch, params);
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'test/start' }));
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'test/success' }));
   });
@@ -109,7 +98,6 @@ describe('createEntity', () => {
       initialState,
       reducers,
       call: 'test:get',
-      sub: mockSub,
       save: 'setData',
       socket: mockSocket,
     });
