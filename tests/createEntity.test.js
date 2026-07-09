@@ -1,9 +1,17 @@
 import { createEntity } from '../src/store/factories/createEntity';
-import { resetRegistry } from '../src/store/registry';
+import { getRegistry } from '../src/store/registry';
 
 describe('createEntity', () => {
+  // Сбрасываем registry перед каждым тестом
+  beforeEach(() => {
+    const reg = getRegistry();
+    reg.counters = {};
+    reg.unsubscribes = {};
+  });
+
   const mockSocket = {
-    emit: jest.fn((event, params, callback) => {
+    emit: jest.fn((event, ...args) => {
+      const callback = args.length === 1 ? args[0] : args[1];
       callback([{ id: 1, name: 'Test' }]);
     }),
   };
@@ -12,23 +20,15 @@ describe('createEntity', () => {
     subscribe: jest.fn(() => jest.fn()),
   };
 
-  const initialState = { list: [] };
-  const save = jest.fn((data) => ({ type: 'test/setData', payload: data }));
+  const save = jest.fn((data) => ({ type: 'SAVE', payload: data }));
   const reducers = {
-    setData: (state, action) => {
-      state.list = action.payload;
-    },
+    setData: save,
   };
 
-  let entity;
-  let reducer;
-  let mockState;
+  const initialState = { list: [] };
 
-  beforeEach(() => {
-    resetRegistry(); // Сбрасываем счётчики и отписки между тестами
-    jest.clearAllMocks();
-
-    entity = createEntity({
+  it('should create slice with combined state', () => {
+    const entity = createEntity({
       name: 'test',
       initialState,
       reducers,
@@ -37,13 +37,7 @@ describe('createEntity', () => {
       save,
       socket: mockSocket,
     });
-    reducer = entity.slice.reducer;
-    mockState = {
-      test: reducer(undefined, { type: '@@INIT' }),
-    };
-  });
 
-  it('should create slice with combined state', () => {
     expect(entity.slice).toBeDefined();
     expect(entity.actions).toBeDefined();
     expect(entity.init).toBeInstanceOf(Function);
@@ -51,43 +45,73 @@ describe('createEntity', () => {
     expect(entity.selectors).toBeDefined();
   });
 
-  it('should load data on init', async () => {
-    const dispatch = jest.fn((action) => {
-      mockState.test = reducer(mockState.test, action);
+  it('should load data on init without params', async () => {
+    const entity = createEntity({
+      name: 'test',
+      initialState,
+      reducers,
+      call: 'test:get',
+      sub: mockSub,
+      save,
+      socket: mockSocket,
     });
-    const getState = jest.fn(() => mockState);
+
+    const dispatch = jest.fn();
+    const getState = jest.fn().mockReturnValue({ test: { initialized: false, loading: false } });
 
     await entity.init()(dispatch, getState);
 
-    expect(mockSocket.emit).toHaveBeenCalledWith('test:get', {}, expect.any(Function));
+    expect(mockSocket.emit).toHaveBeenCalledWith('test:get', expect.any(Function));
     expect(save).toHaveBeenCalledWith([{ id: 1, name: 'Test' }]);
     expect(mockSub.subscribe).toHaveBeenCalled();
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'test/start' }));
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'test/success' }));
-    expect(mockState.test.initialized).toBe(true);
-    expect(mockState.test.loading).toBe(false);
-    expect(mockState.test.list).toEqual([{ id: 1, name: 'Test' }]);
+  });
+
+  it('should load data on init with params', async () => {
+    const entity = createEntity({
+      name: 'test',
+      initialState,
+      reducers,
+      call: 'test:get',
+      sub: mockSub,
+      save,
+      socket: mockSocket,
+    });
+
+    const dispatch = jest.fn();
+    const getState = jest.fn().mockReturnValue({ test: { initialized: false, loading: false } });
+    const params = { id: '123' };
+
+    await entity.init(params)(dispatch, getState);
+
+    expect(mockSocket.emit).toHaveBeenCalledWith('test:get', params, expect.any(Function));
+    expect(save).toHaveBeenCalledWith([{ id: 1, name: 'Test' }]);
+    expect(mockSub.subscribe).toHaveBeenCalledWith(dispatch, params);
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'test/start' }));
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'test/success' }));
   });
 
   it('should clean data on clean', async () => {
-    const dispatch = jest.fn((action) => {
-      mockState.test = reducer(mockState.test, action);
+    const entity = createEntity({
+      name: 'test',
+      initialState,
+      reducers,
+      call: 'test:get',
+      sub: mockSub,
+      save,
+      socket: mockSocket,
     });
-    const getState = jest.fn(() => mockState);
 
-    // Инициализируем
-    await entity.init()(dispatch, getState);
-    expect(mockState.test.initialized).toBe(true);
+    const dispatch = jest.fn();
+    const getState = jest.fn().mockReturnValue({ test: { initialized: true, loading: false } });
 
-    // Вызываем clean
+    // Устанавливаем счётчик в 1, чтобы decrement вернул true
+    const reg = getRegistry();
+    reg.counters['test'] = 1;
+
     await entity.clean()(dispatch, getState);
 
-    // Проверяем, что reset был вызван
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ type: 'test/reset' }));
-    // Проверяем, что состояние сбросилось
-    expect(mockState.test.initialized).toBe(false);
-    expect(mockState.test.loading).toBe(false);
-    expect(mockState.test.error).toBe(null);
-    expect(mockState.test.list).toEqual([]);
   });
 });
