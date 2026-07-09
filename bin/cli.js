@@ -9,7 +9,6 @@ const __dirname = path.dirname(__filename)
 
 const STRUCTURE = {
   'src/store/state': '// state files here (initialState + reducers)',
-  'src/store/event': '// event files here (createSub)',
   'src/store/entity': '// entity files here (createEntity)',
   'src/store/method': '// method files here (createMethod)',
   'src/ui/view': '// view components here',
@@ -27,7 +26,6 @@ export * from './ui'
   'src/store/index.js': `
 // Store exports
 export * from './state'
-export * from './event'
 export * from './entity'
 export * from './method'
 `,
@@ -43,18 +41,13 @@ export * from './page'
 // Example:
 // export * from './contestStatusState'
 `,
-  'src/store/event/index.js': `
-// Export your event subscriptions
-// Example:
-// export { contestStatusSub } from './contestStatusEvent'
-`,
   'src/store/entity/index.js': `
-// Export your entities
+// Export your entities (createEntity)
 // Example:
 // export { contestStatus } from './contestStatusEntity'
 `,
   'src/store/method/index.js': `
-// Export your methods
+// Export your methods (createMethod)
 // Example:
 // export { createUser } from './userMethod'
 `,
@@ -109,10 +102,9 @@ const createStructure = () => {
   console.log('\n🎉 US-GFECD structure created successfully!')
   console.log('\nNext steps:')
   console.log('  1. Create state files in src/store/state/ (initialState + reducers)')
-  console.log('  2. Create event subscriptions in src/store/event/ (createSub)')
-  console.log('  3. Create entities in src/store/entity/ (createEntity)')
-  console.log('  4. Create methods in src/store/method/ (createMethod)')
-  console.log('  5. Create UI components in src/ui/')
+  console.log('  2. Create entities in src/store/entity/ (createEntity with handlers)')
+  console.log('  3. Create methods in src/store/method/ (createMethod)')
+  console.log('  4. Create UI components in src/ui/')
 }
 
 // Запуск
