@@ -74,18 +74,30 @@ export const createEntity = ({ name, initialState, reducers, call, sub, save, so
     increment(name);
 
     try {
+      // Если параметры пустые, не передаём их в emit (как в createInit)
       const data = await new Promise((resolve, reject) => {
         if (!socket) {
           reject(new Error('Socket not provided'));
           return;
         }
-        socket.emit(call, params, (response) => {
-          if (response && response.error) {
-            reject(new Error(response.error));
-          } else {
-            resolve(response);
-          }
-        });
+        // Если params пустой объект, вызываем без данных
+        if (Object.keys(params).length === 0) {
+          socket.emit(call, (response) => {
+            if (response && response.error) {
+              reject(new Error(response.error));
+            } else {
+              resolve(response);
+            }
+          });
+        } else {
+          socket.emit(call, params, (response) => {
+            if (response && response.error) {
+              reject(new Error(response.error));
+            } else {
+              resolve(response);
+            }
+          });
+        }
       });
 
       // Сохраняем данные через пользовательский экшен save
@@ -97,6 +109,7 @@ export const createEntity = ({ name, initialState, reducers, call, sub, save, so
 
       dispatch(success());
     } catch (error) {
+      console.error('❌ Init error:', error);
       dispatch(fail(error.message));
     }
   };
@@ -121,18 +134,12 @@ export const createEntity = ({ name, initialState, reducers, call, sub, save, so
   };
 
   // -----------------------------------------------------
-  // Мемоизированные селекторы
+  // Селекторы
   const selectSelf = (state) => state[name];
 
   const selectors = {
-    selectData: createSelector(
-      [selectSelf],
-      (data) => data
-    ),
-    selectState: createSelector(
-      [selectSelf],
-      (data) => data
-    ),
+    selectData: selectSelf,
+    selectState: selectSelf,
     selectLoading: createSelector(
       [selectSelf],
       (data) => data.loading

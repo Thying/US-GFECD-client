@@ -61,10 +61,6 @@ src/
 
 ### 1. Установка
 
-```bash
-npm install @us-gfecd/client socket.io-client react-redux @reduxjs/toolkit
-```
-
 ### 2. Инициализация структуры
 
 ```bash
@@ -137,13 +133,17 @@ export const contestStatus = createEntity({
 ```js
 // src/store/method/userMethod.js
 import { createMethod } from '@us-gfecd/client'
-import { addUser } from '../entity/userEntity'
+import { reducers } from '../state/userState'
+
+// Экшены из state используются как для инициализации (в entity), так и для методов
+const { addUser } = reducers
 
 export const createUser = createMethod({
   call: 'createUser',
   save: addUser,
 })
 ```
+
 
 ### 7. Подключите в store (один слайс!)
 
