@@ -123,7 +123,7 @@ export const contestStatus = createEntity({
   reducers,
   call: 'contest:getCurrentStatus',
   sub: contestStatusSub,
-  save: reducers.setContestStatus,
+  save: 'setContestStatus',
   socket,
 })
 ```
@@ -208,8 +208,10 @@ export const ContestStatusView = () => {
 | `reducers` | `Object` | Объект с редьюсерами для данных (экшены генерируются автоматически) |
 | `call` | `string` | Имя события Socket.IO для запроса данных |
 | `sub` | `Object` | Подписка (результат `createSub`) |
-| `save` | `Function` | Экшен для сохранения данных (из `reducers`) |
+| `save` | `string ` | Имя экшена из reducers, которое будет вызвано для сохранения данных (например, 'setData') |
 | `socket` | `Socket` | Экземпляр сокета |
+
+Важно: Параметр save должен быть строкой, соответствующей имени одного из редьюсеров, переданных в reducers. Библиотека автоматически найдёт нужный экшен-криэйтор и использует его для сохранения данных после успешной загрузки.
 
 **Возвращает:** `{ slice, actions, init, clean, selectors }`
 
