@@ -1,19 +1,6 @@
 import { createSlice, createSelector } from '@reduxjs/toolkit';
 import { increment, decrement, setUnsubscribe, getUnsubscribe, clearUnsubscribe } from '../registry';
 
-/**
- * Создаёт сущность с состоянием, инициализацией и подписками.
- *
- * @param {Object} params
- * @param {string} params.name - уникальное имя сущности (будет ключом в store)
- * @param {Object} params.initialState - начальное состояние данных (без служебных полей)
- * @param {Object} params.reducers - объект с редьюсерами для данных
- * @param {string} params.call - имя события Socket.IO для запроса данных
- * @param {Object} params.sub - подписка (результат createSub)
- * @param {Function} params.save - экшен для сохранения данных (из reducers)
- * @param {Socket} params.socket - экземпляр сокета
- * @returns {Object} { slice, actions, init, clean, selectors }
- */
 export const createEntity = ({ name, initialState, reducers, call, sub, save, socket }) => {
   // Служебные редьюсеры
   const builtinReducers = {
@@ -30,7 +17,6 @@ export const createEntity = ({ name, initialState, reducers, call, sub, save, so
       state.error = action.payload;
     },
     reset: (state) => {
-      // Сбрасываем данные в начальное состояние
       Object.assign(state, initialState);
       state.loading = false;
       state.error = null;
@@ -38,13 +24,11 @@ export const createEntity = ({ name, initialState, reducers, call, sub, save, so
     },
   };
 
-  // Объединяем пользовательские редьюсеры со служебными
   const allReducers = {
     ...reducers,
     ...builtinReducers,
   };
 
-  // Создаём slice
   const slice = createSlice({
     name,
     initialState: {
@@ -57,12 +41,8 @@ export const createEntity = ({ name, initialState, reducers, call, sub, save, so
   });
 
   const { actions } = slice;
-
-  // Отделяем служебные экшены (для использования внутри)
   const { start, success, fail, reset } = actions;
 
-  // -----------------------------------------------------
-  // Init thunk
   const initThunk = (params = {}) => async (dispatch, getState) => {
     const state = getState()[name];
     if (state.initialized || state.loading) {
@@ -74,13 +54,11 @@ export const createEntity = ({ name, initialState, reducers, call, sub, save, so
     increment(name);
 
     try {
-      // Если параметры пустые, не передаём их в emit (как в createInit)
       const data = await new Promise((resolve, reject) => {
         if (!socket) {
           reject(new Error('Socket not provided'));
           return;
         }
-        // Если params пустой объект, вызываем без данных
         if (Object.keys(params).length === 0) {
           socket.emit(call, (response) => {
             if (response && response.error) {
@@ -100,10 +78,9 @@ export const createEntity = ({ name, initialState, reducers, call, sub, save, so
         }
       });
 
-      // Сохраняем данные через пользовательский экшен save
+      // save — это экшен-криэйтор, переданный из state
       dispatch(save(data));
 
-      // Подписываемся на события
       const unsubscribe = sub.subscribe(dispatch, params);
       setUnsubscribe(name, unsubscribe);
 
@@ -114,8 +91,6 @@ export const createEntity = ({ name, initialState, reducers, call, sub, save, so
     }
   };
 
-  // -----------------------------------------------------
-  // Clean thunk
   const cleanThunk = () => (dispatch, getState) => {
     const state = getState()[name];
     if (!state.initialized) return;
@@ -129,29 +104,17 @@ export const createEntity = ({ name, initialState, reducers, call, sub, save, so
       clearUnsubscribe(name);
     }
 
-    // Сбрасываем всё состояние (данные + флаги)
     dispatch(reset());
   };
 
-  // -----------------------------------------------------
-  // Селекторы
   const selectSelf = (state) => state[name];
 
   const selectors = {
     selectData: selectSelf,
     selectState: selectSelf,
-    selectLoading: createSelector(
-      [selectSelf],
-      (data) => data.loading
-    ),
-    selectError: createSelector(
-      [selectSelf],
-      (data) => data.error
-    ),
-    selectInitialized: createSelector(
-      [selectSelf],
-      (data) => data.initialized
-    ),
+    selectLoading: createSelector([selectSelf], (data) => data.loading),
+    selectError: createSelector([selectSelf], (data) => data.error),
+    selectInitialized: createSelector([selectSelf], (data) => data.initialized),
   };
 
   return {
