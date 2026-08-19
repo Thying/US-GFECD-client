@@ -1,5 +1,21 @@
 import { createError, logWarning } from '../../errors';
 
+/**
+ * @typedef {Object} InvokeConfig
+ * @property {string} call – имя события Socket.IO
+ * @property {Function} save – экшен-креатор для сохранения результата
+ * @property {any} [socket] – экземпляр Socket.IO (опционально, если не задан, будет использован глобальный)
+ * @property {Function} [onSend] – хук перед отправкой
+ * @property {Function} [onSave] – хук после получения данных
+ * @property {Function} [onDone] – хук после успешного завершения
+ * @property {Function} [onError] – хук при ошибке
+ */
+
+/**
+ * Создаёт thunk для выполнения запроса (метод).
+ * @param {InvokeConfig} config
+ * @returns {Function} – thunk (data, on?, id?) => async (dispatch, getState) => ...
+ */
 export const createInvoke = ({
   call,
   save,
@@ -19,6 +35,12 @@ export const createInvoke = ({
     });
   }
 
+  /**
+   * @param {any} data – данные для отправки
+   * @param {Object} [on] – локальные хуки (onSend, onSave, onDone, onError)
+   * @param {Object} [id] – параметры идентификации (для meta.id)
+   * @returns {Function} – async thunk
+   */
   return (data, on, id) => async (dispatch, getState) => {
     const socket = configSocket || (typeof window !== 'undefined' && window.__socket);
     if (!socket) {

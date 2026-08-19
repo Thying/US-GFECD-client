@@ -11,6 +11,30 @@ const serializeId = (id) => {
   return JSON.stringify(id);
 };
 
+/**
+ * @template T
+ * @typedef {Object} EntityConfig
+ * @property {string} name – уникальное имя сущности (используется как ключ в store)
+ * @property {T} reducers – объект редьюсеров (каждый редьюсер получает локальное состояние без полей loading/error/initialized)
+ * @property {any} initialState – начальное состояние для данных (без loading/error/initialized)
+ * @property {string} call – имя события Socket.IO для запроса данных
+ * @property {keyof T} save – имя экшена, в который сохранять полученные данные
+ * @property {Object<string, keyof T | { save: keyof T, room?: string }>} handlers – маппинг событий сервера на экшены
+ * @property {any} socket – экземпляр Socket.IO
+ * @property {Function} [onSend] – глобальный хук перед отправкой запроса
+ * @property {Function} [onSave] – глобальный хук после получения данных
+ * @property {Function} [onDone] – глобальный хук после успешного завершения
+ * @property {Function} [onError] – глобальный хук при ошибке
+ * @property {Function} [onClean] – глобальный хук перед очисткой
+ * @property {Function} [onEnd] – глобальный хук после очистки
+ */
+
+/**
+ * Создаёт сущность, объединяющую state, init, clean и подписки.
+ *
+ * @param {EntityConfig} config
+ * @returns {Object} – объект с полями slice, actions и функцией-фабрикой (idParams) => { init, clean, selectors }
+ */
 export const createEntity = ({
   name,
   initialState,
@@ -261,6 +285,11 @@ export const createEntity = ({
     subscription = createSubscription(resolvedHandlers);
   }
 
+  /**
+   * Фабрика для получения экземпляра сущности с конкретным ID.
+   * @param {Object} [idParams] – параметры для идентификации (например, { id: 123 })
+   * @returns {Object} – { init, clean, selectors }
+   */
   const entityInstance = (idParams = {}) => {
     const idKey = serializeId(idParams);
 
@@ -295,7 +324,7 @@ export const createEntity = ({
     };
 
     // -----------------------------------------------------
-    // Init thunk (без локальных хуков)
+    // Init thunk
     const initThunk = () => async (dispatch, getState) => {
       const state = getState()[name];
       const current = state?.[idKey] || getDefaultState();
@@ -312,7 +341,6 @@ export const createEntity = ({
       dispatch(start({ id: idParams }));
       increment(name, idParams);
 
-      // Хелпер для вызова глобальных хуков
       const callHook = async (hookName, defaultValue, globalHook, ...args) => {
         if (globalHook) {
           return await globalHook(...args, { dispatch, getState });
@@ -321,7 +349,6 @@ export const createEntity = ({
       };
 
       try {
-        // onSend
         const sendResult = await callHook('onSend', idParams, globalOnSend, idParams);
         if (sendResult === null) {
           logWarning('HOK-02', 'request cancelled by onSend returning null', {
@@ -333,7 +360,6 @@ export const createEntity = ({
         }
         const finalParams = sendResult;
 
-        // Запрос данных
         const data = await new Promise((resolve, reject) => {
           if (!socket) {
             reject(createError('CFG-02', 'socket not provided', {
@@ -373,7 +399,6 @@ export const createEntity = ({
           }
         });
 
-        // onSave
         const saveResult = await callHook('onSave', data, globalOnSave, data);
         let savedData = saveResult;
         if (savedData !== null) {
@@ -392,10 +417,8 @@ export const createEntity = ({
           });
         }
 
-        // onDone
         await callHook('onDone', () => {}, globalOnDone, savedData);
 
-        // Подписка
         if (subscription) {
           const unsubscribe = subscription.subscribe(dispatch, idParams);
           setUnsubscribe(name, idParams, unsubscribe);
@@ -421,7 +444,7 @@ export const createEntity = ({
     };
 
     // -----------------------------------------------------
-    // Clean thunk (без локальных хуков)
+    // Clean thunk
     const cleanThunk = () => async (dispatch, getState) => {
       const state = getState()[name];
       const current = state?.[idKey];
@@ -437,7 +460,6 @@ export const createEntity = ({
       const isLast = decrement(name, idParams);
       if (!isLast) return;
 
-      // onClean
       if (globalOnClean) {
         await globalOnClean({ dispatch, getState });
       }
@@ -456,7 +478,6 @@ export const createEntity = ({
 
       dispatch(reset({ id: idParams }));
 
-      // onEnd
       if (globalOnEnd) {
         await globalOnEnd({ dispatch, getState });
       }

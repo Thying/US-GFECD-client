@@ -1,6 +1,11 @@
 import { io } from 'socket.io-client';
 import { createError } from '../../errors';
 
+/**
+ * Получает переменную окружения.
+ * @param {string} key
+ * @returns {string|undefined}
+ */
 const getEnv = (key) => {
   if (typeof process !== 'undefined' && process.env) {
     return process.env[key] || process.env[`REACT_APP_${key}`];
@@ -15,6 +20,11 @@ const DEFAULT_CONFIG = {
   withCredentials: false,
 };
 
+/**
+ * Создаёт экземпляр Socket.IO с конфигурацией из переменных окружения.
+ * @param {Object} userConfig – пользовательские настройки (перекрывают env)
+ * @returns {Socket}
+ */
 export const createSocket = (userConfig = {}) => {
   const envUrl = getEnv('SOCKET_URL');
   const envPath = getEnv('SOCKET_PATH');
@@ -42,6 +52,11 @@ export const createSocket = (userConfig = {}) => {
 
 let socketInstance = null;
 
+/**
+ * Возвращает глобальный экземпляр сокета (создаёт, если его нет).
+ * @param {Object} userConfig
+ * @returns {Socket}
+ */
 export const getSocket = (userConfig = {}) => {
   if (!socketInstance) {
     socketInstance = createSocket(userConfig);
