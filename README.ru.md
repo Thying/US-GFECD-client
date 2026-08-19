@@ -1,5 +1,3 @@
-# @us-gfecd/client
-
 [🇺🇸 English](./README.md) | **🇷🇺 Русский**
 
 Библиотека для React + Redux + Socket.IO.

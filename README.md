@@ -1,6 +1,4 @@
-# @us-gfecd/client
-
-[**🇺🇸 English**](./README.md) | [🇷🇺 Русский](./README.ru.md)
+**🇺🇸 English** | [🇷🇺 Русский](./README.ru.md)
 
 Client library for React + Redux + Socket.IO.
 
