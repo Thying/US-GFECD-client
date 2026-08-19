@@ -1,47 +1,108 @@
 import { createSlice, createSelector } from '@reduxjs/toolkit';
 import { increment, decrement, setUnsubscribe, getUnsubscribe, clearUnsubscribe } from '../registry';
+import { createError, logWarning } from '../../errors';
 
-/**
- * Создаёт сущность с состоянием, инициализацией и встроенной подпиской.
- *
- * @param {Object} params
- * @param {string} params.name - уникальное имя сущности (ключ в store)
- * @param {Object} params.initialState - начальное состояние данных (без служебных полей)
- * @param {Object} params.reducers - объект с редьюсерами для данных
- * @param {string} params.call - имя события Socket.IO для запроса данных
- * @param {string} params.save - имя экшена из reducers для сохранения данных
- * @param {Object} params.handlers - объект, где ключ — событие, значение — имя экшена из reducers или экшен-криэйтор
- * @param {Socket} params.socket - экземпляр сокета
- * @returns {Object} { slice, actions, init, clean, selectors }
- */
-export const createEntity = ({ name, initialState, reducers, call, save, handlers, socket }) => {
-  // Служебные редьюсеры
+const DEFAULT_ID_KEY = '__default__';
+
+const serializeId = (id) => {
+  if (id === undefined || id === null || (typeof id === 'object' && Object.keys(id).length === 0)) {
+    return DEFAULT_ID_KEY;
+  }
+  return JSON.stringify(id);
+};
+
+export const createEntity = ({
+  name,
+  initialState,
+  reducers,
+  call,
+  save,
+  handlers,
+  socket,
+  onSend: globalOnSend,
+  onSave: globalOnSave,
+  onDone: globalOnDone,
+  onError: globalOnError,
+  onClean: globalOnClean,
+  onEnd: globalOnEnd,
+}) => {
+  if (!name) {
+    throw createError('CFG-05', 'name is required', { factory: 'createEntity' });
+  }
+  if (!call) {
+    throw createError('CFG-05', 'call is required', {
+      factory: 'createEntity',
+      entity: name,
+    });
+  }
+
+  const getDefaultState = () => ({
+    ...initialState,
+    loading: false,
+    error: null,
+    initialized: false,
+  });
+
+  const adaptedReducers = {};
+  Object.entries(reducers).forEach(([actionName, reducer]) => {
+    adaptedReducers[actionName] = (state, action) => {
+      const id = action.meta?.id || DEFAULT_ID_KEY;
+      const idKey = serializeId(id);
+      if (!state[idKey]) {
+        state[idKey] = getDefaultState();
+      }
+      const localState = state[idKey];
+      const dataState = { ...localState };
+      delete dataState.loading;
+      delete dataState.error;
+      delete dataState.initialized;
+      const result = reducer(dataState, action);
+      Object.assign(localState, result);
+    };
+  });
+
   const builtinReducers = {
-    start: (state) => {
-      state.loading = true;
-      state.error = null;
+    start: (state, action) => {
+      const id = action.payload?.id || DEFAULT_ID_KEY;
+      const idKey = serializeId(id);
+      if (!state[idKey]) {
+        state[idKey] = getDefaultState();
+      }
+      state[idKey].loading = true;
+      state[idKey].error = null;
     },
-    success: (state) => {
-      state.loading = false;
-      state.initialized = true;
+    success: (state, action) => {
+      const id = action.payload?.id || DEFAULT_ID_KEY;
+      const idKey = serializeId(id);
+      if (!state[idKey]) {
+        state[idKey] = getDefaultState();
+      }
+      state[idKey].loading = false;
+      state[idKey].initialized = true;
     },
     fail: (state, action) => {
-      state.loading = false;
-      state.error = action.payload;
+      const id = action.payload?.id || DEFAULT_ID_KEY;
+      const idKey = serializeId(id);
+      if (!state[idKey]) {
+        state[idKey] = getDefaultState();
+      }
+      state[idKey].loading = false;
+      state[idKey].error = action.payload.error || 'Unknown error';
     },
-    reset: (state) => {
-      Object.assign(state, initialState);
-      state.loading = false;
-      state.error = null;
-      state.initialized = false;
+    reset: (state, action) => {
+      const id = action.payload?.id || DEFAULT_ID_KEY;
+      const idKey = serializeId(id);
+      if (state[idKey]) {
+        delete state[idKey];
+      }
     },
   };
 
-  const allReducers = { ...reducers, ...builtinReducers };
+  const allReducers = { ...adaptedReducers, ...builtinReducers };
 
   const slice = createSlice({
     name,
-    initialState: { ...initialState, loading: false, error: null, initialized: false },
+    initialState: {},
     reducers: allReducers,
   });
 
@@ -50,38 +111,94 @@ export const createEntity = ({ name, initialState, reducers, call, save, handler
 
   const saveAction = actions[save];
   if (!saveAction) {
-    throw new Error(`createEntity: reducer "${save}" not found in reducers`);
+    const available = Object.keys(actions);
+    throw createError('CFG-01', `save action "${save}" not found in reducers`, {
+      factory: 'createEntity',
+      entityName: name,
+      availableActions: available,
+    });
   }
 
-  // -----------------------------------------------------
-  // Создаём подписку на основе handlers
   let subscription = null;
+  let requiredParams = [];
+
   if (handlers) {
-    // Разрешаем имена экшенов
+    if (typeof handlers !== 'object') {
+      throw createError('CFG-03', 'handlers must be an object', {
+        factory: 'createEntity',
+        entityName: name,
+      });
+    }
+
     const resolvedHandlers = {};
+
     for (const [event, config] of Object.entries(handlers)) {
       if (typeof config === 'function') {
         resolvedHandlers[event] = config;
       } else if (typeof config === 'string') {
         const action = actions[config];
         if (!action) {
-          throw new Error(`createEntity: action "${config}" not found in reducers`);
+          const available = Object.keys(actions);
+          throw createError('CFG-06', `handler for event "${event}" references action "${config}" not found in reducers`, {
+            factory: 'createEntity',
+            entityName: name,
+            event,
+            missingAction: config,
+            availableActions: available,
+          });
         }
         resolvedHandlers[event] = action;
-      } else if (config && typeof config === 'object' && config.save) {
-        // Объект с комнатой и save
+      } else if (config && typeof config === 'object') {
+        if (!config.save) {
+          throw createError('CFG-04', `handler for event "${event}" is missing "save" property`, {
+            factory: 'createEntity',
+            entityName: name,
+            event,
+          });
+        }
         const action = actions[config.save];
         if (!action) {
-          throw new Error(`createEntity: action "${config.save}" not found in reducers`);
+          const available = Object.keys(actions);
+          throw createError('CFG-06', `handler for event "${event}" references action "${config.save}" not found in reducers`, {
+            factory: 'createEntity',
+            entityName: name,
+            event,
+            missingAction: config.save,
+            availableActions: available,
+          });
+        }
+        if (config.room) {
+          const matches = config.room.match(/\{(\??)(\w+)\}/g) || [];
+          matches.forEach((match) => {
+            const parts = match.match(/\{(\??)(\w+)\}/);
+            if (parts) {
+              const optional = parts[1] === '?';
+              const param = parts[2];
+              if (!optional && !requiredParams.includes(param)) {
+                requiredParams.push(param);
+              }
+            }
+          });
         }
         resolvedHandlers[event] = { ...config, save: action };
       } else {
-        resolvedHandlers[event] = config;
+        throw createError('CFG-03', 'invalid handler format', {
+          factory: 'createEntity',
+          entityName: name,
+          event,
+          handler: config,
+        });
       }
     }
 
-    // Создаём подписку (используем внутреннюю функцию, аналогичную createSub)
-    const createSubscription = (handlersMap, socket) => {
+    if (!socket) {
+      throw createError('CFG-02', 'socket not provided for subscription', {
+        factory: 'createEntity',
+        entityName: name,
+      });
+    }
+
+    const createSubscription = (handlersMap) => {
       const subscriptions = Object.entries(handlersMap).map(([event, config]) => {
         const isGlobal = typeof config === 'function';
         const save = isGlobal ? config : config.save;
@@ -90,14 +207,37 @@ export const createEntity = ({ name, initialState, reducers, call, save, handler
       });
 
       return {
-        subscribe: (dispatch, params = {}) => {
+        subscribe: (dispatch, idParams = {}) => {
+          requiredParams.forEach((param) => {
+            if (!(param in idParams)) {
+              throw createError('CFG-08', `required parameter "${param}" is missing for room template`, {
+                factory: 'createEntity',
+                entityName: name,
+                param,
+              });
+            }
+          });
+
           const entries = subscriptions.map(({ event, save, roomTemplate }) => {
-            const handler = (data) => dispatch(save(data));
+            const handler = (data) => {
+              const action = save(data);
+              if (action.meta && typeof action.meta === 'object') {
+                action.meta.id = idParams;
+              } else {
+                action.meta = { id: idParams };
+              }
+              dispatch(action);
+            };
             socket.on(event, handler);
 
             let room = null;
             if (roomTemplate) {
-              room = roomTemplate.replace(/\{(\w+)\}/g, (_, key) => params[key] || '');
+              room = roomTemplate.replace(/\{(\??)(\w+)\}/g, (_, optional, key) => {
+                if (optional === '?') {
+                  return idParams[key] !== undefined ? idParams[key] : '';
+                }
+                return idParams[key] !== undefined ? idParams[key] : '';
+              });
               if (room) {
                 socket.emit('join', room);
               }
@@ -118,89 +258,219 @@ export const createEntity = ({ name, initialState, reducers, call, save, handler
       };
     };
 
-    subscription = createSubscription(resolvedHandlers, socket);
+    subscription = createSubscription(resolvedHandlers);
   }
 
-  // -----------------------------------------------------
-  // Init thunk (активирует подписку)
-  const initThunk = (params = {}) => async (dispatch, getState) => {
-    const state = getState()[name];
-    if (state.initialized || state.loading) {
-      increment(name);
-      return;
-    }
+  const entityInstance = (idParams = {}) => {
+    const idKey = serializeId(idParams);
 
-    dispatch(start());
-    increment(name);
-
-    try {
-      const data = await new Promise((resolve, reject) => {
-        if (!socket) {
-          reject(new Error('Socket not provided'));
-          return;
-        }
-        if (Object.keys(params).length === 0) {
-          socket.emit(call, (response) => {
-            if (response && response.error) reject(new Error(response.error));
-            else resolve(response);
-          });
-        } else {
-          socket.emit(call, params, (response) => {
-            if (response && response.error) reject(new Error(response.error));
-            else resolve(response);
+    if (subscription) {
+      requiredParams.forEach((param) => {
+        if (!(param in idParams)) {
+          throw createError('CFG-08', `required parameter "${param}" is missing for room template`, {
+            factory: 'createEntity',
+            entityName: name,
+            param,
           });
         }
       });
+    }
 
-      dispatch(saveAction(data));
+    const selectSelf = (state) => {
+      const sliceState = state[name];
+      if (!sliceState) return getDefaultState();
+      return sliceState[idKey] || getDefaultState();
+    };
 
-      // Активируем подписку, если она есть
-      if (subscription) {
-        const unsubscribe = subscription.subscribe(dispatch, params);
-        setUnsubscribe(name, unsubscribe);
+    const selectors = {
+      selectData: (state) => {
+        const s = selectSelf(state);
+        const { loading, error, initialized, ...data } = s;
+        return data;
+      },
+      selectState: selectSelf,
+      selectLoading: createSelector([selectSelf], (s) => s.loading),
+      selectError: createSelector([selectSelf], (s) => s.error),
+      selectInitialized: createSelector([selectSelf], (s) => s.initialized),
+    };
+
+    // -----------------------------------------------------
+    // Init thunk (без локальных хуков)
+    const initThunk = () => async (dispatch, getState) => {
+      const state = getState()[name];
+      const current = state?.[idKey] || getDefaultState();
+      if (current.initialized || current.loading) {
+        increment(name, idParams);
+        logWarning('LIF-02', 'init called while already initialized', {
+          factory: 'createEntity',
+          entityName: name,
+          id: idParams,
+        });
+        return;
       }
 
-      dispatch(success());
-    } catch (error) {
-      console.error('❌ Init error:', error);
-      dispatch(fail(error.message));
-    }
+      dispatch(start({ id: idParams }));
+      increment(name, idParams);
+
+      // Хелпер для вызова глобальных хуков
+      const callHook = async (hookName, defaultValue, globalHook, ...args) => {
+        if (globalHook) {
+          return await globalHook(...args, { dispatch, getState });
+        }
+        return typeof defaultValue === 'function' ? defaultValue(...args) : defaultValue;
+      };
+
+      try {
+        // onSend
+        const sendResult = await callHook('onSend', idParams, globalOnSend, idParams);
+        if (sendResult === null) {
+          logWarning('HOK-02', 'request cancelled by onSend returning null', {
+            factory: 'createEntity',
+            entityName: name,
+            id: idParams,
+          });
+          return null;
+        }
+        const finalParams = sendResult;
+
+        // Запрос данных
+        const data = await new Promise((resolve, reject) => {
+          if (!socket) {
+            reject(createError('CFG-02', 'socket not provided', {
+              factory: 'createEntity',
+              entityName: name,
+              id: idParams,
+            }));
+            return;
+          }
+          const hasData = finalParams && typeof finalParams === 'object' && Object.keys(finalParams).length > 0;
+          if (!hasData) {
+            socket.emit(call, (response) => {
+              if (response && response.error) {
+                reject(createError('NET-03', 'server returned error', {
+                  factory: 'createEntity',
+                  entityName: name,
+                  serverError: response.error,
+                  id: idParams,
+                }));
+              } else {
+                resolve(response);
+              }
+            });
+          } else {
+            socket.emit(call, finalParams, (response) => {
+              if (response && response.error) {
+                reject(createError('NET-03', 'server returned error', {
+                  factory: 'createEntity',
+                  entityName: name,
+                  serverError: response.error,
+                  id: idParams,
+                }));
+              } else {
+                resolve(response);
+              }
+            });
+          }
+        });
+
+        // onSave
+        const saveResult = await callHook('onSave', data, globalOnSave, data);
+        let savedData = saveResult;
+        if (savedData !== null) {
+          const action = saveAction(savedData);
+          if (action.meta && typeof action.meta === 'object') {
+            action.meta.id = idParams;
+          } else {
+            action.meta = { id: idParams };
+          }
+          dispatch(action);
+        } else {
+          logWarning('DAT-07', 'onSave returned null, saving skipped', {
+            factory: 'createEntity',
+            entityName: name,
+            id: idParams,
+          });
+        }
+
+        // onDone
+        await callHook('onDone', () => {}, globalOnDone, savedData);
+
+        // Подписка
+        if (subscription) {
+          const unsubscribe = subscription.subscribe(dispatch, idParams);
+          setUnsubscribe(name, idParams, unsubscribe);
+        }
+
+        dispatch(success({ id: idParams }));
+        return savedData;
+      } catch (error) {
+        if (error.code) {
+          await callHook('onError', () => {}, globalOnError, error);
+          throw error;
+        }
+        const processedError = createError('DAT-03', 'unexpected error in entity init', {
+          factory: 'createEntity',
+          entityName: name,
+          originalError: error.message || error,
+          id: idParams,
+        });
+        await callHook('onError', () => {}, globalOnError, processedError);
+        dispatch(fail({ id: idParams, error: processedError.message }));
+        throw processedError;
+      }
+    };
+
+    // -----------------------------------------------------
+    // Clean thunk (без локальных хуков)
+    const cleanThunk = () => async (dispatch, getState) => {
+      const state = getState()[name];
+      const current = state?.[idKey];
+      if (!current || !current.initialized) {
+        logWarning('LIF-01', 'clean called before init', {
+          factory: 'createEntity',
+          entityName: name,
+          id: idParams,
+        });
+        return;
+      }
+
+      const isLast = decrement(name, idParams);
+      if (!isLast) return;
+
+      // onClean
+      if (globalOnClean) {
+        await globalOnClean({ dispatch, getState });
+      }
+
+      const unsubscribe = getUnsubscribe(name, idParams);
+      if (unsubscribe) {
+        unsubscribe();
+        clearUnsubscribe(name, idParams);
+      } else {
+        logWarning('LIF-03', 'clean called but no active subscription', {
+          factory: 'createEntity',
+          entityName: name,
+          id: idParams,
+        });
+      }
+
+      dispatch(reset({ id: idParams }));
+
+      // onEnd
+      if (globalOnEnd) {
+        await globalOnEnd({ dispatch, getState });
+      }
+    };
+
+    return {
+      init: initThunk,
+      clean: cleanThunk,
+      selectors,
+    };
   };
 
-  // -----------------------------------------------------
-  // Clean thunk
-  const cleanThunk = () => (dispatch, getState) => {
-    const state = getState()[name];
-    if (!state.initialized) return;
+  entityInstance.slice = slice;
+  entityInstance.actions = actions;
 
-    const isLast = decrement(name);
-    if (!isLast) return;
-
-    const unsubscribe = getUnsubscribe(name);
-    if (unsubscribe) {
-      unsubscribe();
-      clearUnsubscribe(name);
-    }
-
-    dispatch(reset());
-  };
-
-  // -----------------------------------------------------
-  // Селекторы
-  const selectSelf = (state) => state[name];
-  const selectors = {
-    selectData: selectSelf,
-    selectState: selectSelf,
-    selectLoading: createSelector([selectSelf], (data) => data.loading),
-    selectError: createSelector([selectSelf], (data) => data.error),
-    selectInitialized: createSelector([selectSelf], (data) => data.initialized),
-  };
-
-  return {
-    slice,
-    actions,
-    init: initThunk,
-    clean: cleanThunk,
-    selectors,
-  };
+  return entityInstance;
 };

@@ -1,32 +1,60 @@
 const registry = {
-  counters: {},
-  unsubscribes: {},
+  counters: {},      // { sliceName: { [idKey]: number } }
+  unsubscribes: {},  // { sliceName: { [idKey]: function } }
 };
 
-export const increment = (sliceName) => {
-  registry.counters[sliceName] = (registry.counters[sliceName] || 0) + 1;
+const getDefaultIdKey = () => '__default__';
+
+const getIdKey = (id) => {
+  if (id === undefined || id === null || (typeof id === 'object' && Object.keys(id).length === 0)) {
+    return getDefaultIdKey();
+  }
+  // Сериализуем объект ID в строку для использования в качестве ключа
+  return JSON.stringify(id);
 };
 
-export const decrement = (sliceName) => {
-  registry.counters[sliceName] = (registry.counters[sliceName] || 1) - 1;
-  return registry.counters[sliceName] === 0;
+export const increment = (sliceName, id) => {
+  const idKey = getIdKey(id);
+  if (!registry.counters[sliceName]) {
+    registry.counters[sliceName] = {};
+  }
+  registry.counters[sliceName][idKey] = (registry.counters[sliceName][idKey] || 0) + 1;
 };
 
-export const setUnsubscribe = (sliceName, unsubscribeFn) => {
-  registry.unsubscribes[sliceName] = unsubscribeFn;
+export const decrement = (sliceName, id) => {
+  const idKey = getIdKey(id);
+  if (!registry.counters[sliceName]) {
+    registry.counters[sliceName] = {};
+  }
+  registry.counters[sliceName][idKey] = (registry.counters[sliceName][idKey] || 1) - 1;
+  return registry.counters[sliceName][idKey] === 0;
 };
 
-export const getUnsubscribe = (sliceName) => {
-  return registry.unsubscribes[sliceName];
+export const setUnsubscribe = (sliceName, id, unsubscribeFn) => {
+  const idKey = getIdKey(id);
+  if (!registry.unsubscribes[sliceName]) {
+    registry.unsubscribes[sliceName] = {};
+  }
+  registry.unsubscribes[sliceName][idKey] = unsubscribeFn;
 };
 
-export const clearUnsubscribe = (sliceName) => {
-  delete registry.unsubscribes[sliceName];
+export const getUnsubscribe = (sliceName, id) => {
+  const idKey = getIdKey(id);
+  if (!registry.unsubscribes[sliceName]) {
+    return undefined;
+  }
+  return registry.unsubscribes[sliceName][idKey];
+};
+
+export const clearUnsubscribe = (sliceName, id) => {
+  const idKey = getIdKey(id);
+  if (registry.unsubscribes[sliceName]) {
+    delete registry.unsubscribes[sliceName][idKey];
+  }
 };
 
 export const getRegistry = () => registry;
 
-// Добавляем функцию сброса (для тестов)
 export const resetRegistry = () => {
   registry.counters = {};
   registry.unsubscribes = {};

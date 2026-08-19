@@ -1,760 +1,630 @@
-# US-GFECD Architecture
+# @us-gfecd/client
 
-**US-GFECD** — это архитектурный подход для построения масштабируемых realtime-приложений с чётким разделением ответственности на клиенте и сервере.
+[**🇺🇸 English**](./README.md) | [🇷🇺 Русский](./README.ru.md)
 
----
+Client library for React + Redux + Socket.IO.
 
-## 📖 Обзор
+**Separates UI and Store:**
 
-Аббревиатура расшифровывается как:
+**UI:**
+- **View** — connects to Entity, displays data and flags (`loading`, `error`, `data`). Calls `init()` on mount, `clean()` on unmount.
+- **Edit** — calls Invoke, passes data. Doesn't care about subscription state.
 
-**Клиентская часть:**
-- **U** — UI (интерфейс)
-- **S** — Store (состояние + логика)
+**Store:**
+- **Entity** — extends Redux slice. Adds automatic data management:
+  - Loads data when the first View connects.
+  - Subscribes to events (handlers).
+  - Updates data via events.
+  - Cleans up and unsubscribes when the last View disconnects.
+  - Supports normalized storage by ID.
+- **Invoke** — sends requests to the server and saves results via actions.
 
-**Серверная часть:**
-- **G** — Gate (входной адаптер сервера)
-- **F** — Flow (оркестрация сценариев)
-- **E** — Emit (исходящие события)
-- **C** — Core (чистая бизнес-логика)
-- **D** — Db (доступ к данным)
-
-### Ключевые принципы
-
-- **Бизнес-логика только на сервере** — клиент максимально тонкий
-- **Строгие зависимости между слоями** — только сверху вниз
-- **Микросервисная готовность** — через API Gateway
-- **Декларативный клиент** — минимум кода, максимум описания
+Built on the [US-GFECD](https://npmjs.com/package/@us-gfecd/architecture) architecture.
 
 ---
 
-# 📱 Клиент (US — UI + Store)
-
-Клиентская часть состоит из двух компонентов: **UI** (интерфейс) и **Store** (состояние + логика).
-
-## Структура клиента
-
-```
-src/
-├── store/
-│   ├── state/          # Данные и редьюсеры (без логики инициализации)
-│   ├── entity/         # Объединение данных, инициализации и подписки
-│   └── method/         # Действия (createMethod)
-├── ui/
-│   ├── view/           # Компоненты-читатели
-│   ├── edit/           # Компоненты-писатели
-│   ├── widget/         # Группы view/edit
-│   └── page/           # Страницы
-└── index.js
-```
-
-**Что изменилось:**
-- Раньше `state/` и `init/` были отдельными папками, а в store регистрировались два слайса.
-- Теперь `state/` содержит только `initialState` и `reducers` (чистые данные).
-- `entity/` объединяет данные, логику инициализации (`createEntity`) и подписку — в store регистрируется **один** слайс.
-- Папка `event/` и функция `createSub` **больше не нужны** — подписка описывается прямо в `createEntity` через параметр `handlers`.
-- `method/` использует экшены из `entity.actions`.
-
-## Быстрый старт
-
-### 1. Установка
+## Installation
 
 ```bash
-npm install @us-gfecd/client socket.io-client react-redux @reduxjs/toolkit
+npm install @us-gfecd/client
 ```
 
-### 2. Инициализация структуры
-
-```bash
-npx us-gfecd init
+**Peer dependencies:**
+```json
+"peerDependencies": {
+  "react": ">=18.0.0",
+  "react-redux": ">=8.0.0",
+  "socket.io-client": ">=4.5.0"
+}
 ```
 
-### 3. Создайте State (данные и редьюсеры)
+---
+
+## Socket
+
+### `createSocket(config)`
+
+Creates a Socket.IO instance.
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `url` | `string` | Server URL (required). |
+| `path` | `string` | Socket.IO path (default `/socket.io/`). |
+| `autoConnect` | `boolean` | Auto-connect (default `true`). |
+| `transports` | `string[]` | Transports (default `['websocket']`). |
+| `auth` | `Object` | Authentication data. |
+| `withCredentials` | `boolean` | Send credentials (default `false`). |
+
+**Environment variables:**
+
+The library automatically reads environment variables if set:
+
+| Variable | Description |
+|----------|-------------|
+| `SOCKET_URL` | Server URL (overridden by `url` parameter). |
+| `SOCKET_PATH` | Socket.IO path (overridden by `path` parameter). |
+| `SOCKET_TOKEN` | Authentication token (added to `auth`). |
+
+**Priority:** parameters passed to `createSocket` take precedence over environment variables.
+
+**Example:**
 
 ```js
-// src/store/state/contestStatusState.js
+import { createSocket } from '@us-gfecd/client';
+
+const socket = createSocket({
+  url: 'http://localhost:8080',
+  auth: { token: 'your-jwt-token' },
+});
+
+// If SOCKET_URL is set in .env, can call without parameters:
+// const socket = createSocket();
+```
+
+---
+
+## Entity
+
+### What is Entity?
+
+Entity is an **extension of Redux slice**. It combines:
+
+- **Data** — what is stored in the store.
+- **Initialization** — loading data on first connection.
+- **Subscriptions** — automatic updates via events (handlers).
+- **Cleanup** — unsubscribing and removing data when no longer needed.
+- **Normalization by ID** — storing multiple entity instances in one slice.
+
+**Entity doesn't know who uses it.** It just lives in the store, receives data, updates via events, and is removed when no one is subscribed.
+
+---
+
+### `createEntity(config)`
+
+Creates an entity (extended slice) with automatic data management.
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `name` | `string` | Unique entity name (key in store). |
+| `initialState` | `Object` | Initial data state (without service fields). |
+| `reducers` | `Object` | Data reducers (actions are generated automatically). |
+| `call` | `string` | Socket.IO event name for data request. |
+| `save` | `string` | Action name from `reducers` for saving data. |
+| `handlers` | `Object` | Event subscriptions (see below). |
+| `socket` | `Socket` | Socket instance. |
+| `onSend`, `onSave`, `onDone`, `onError`, `onClean`, `onEnd` | `Function` | Global lifecycle hooks. |
+
+**Returns:** a function `entity(idParams)` that returns an object with:
+
+- `init()` — thunk for loading data.
+- `clean()` — thunk for cleaning data.
+- `selectors` — memoized selectors:
+  - `selectData` — data only (without flags).
+  - `selectState` — full state (data + flags).
+  - `selectLoading`, `selectError`, `selectInitialized`.
+
+---
+
+### Subscriptions (handlers)
+
+The `handlers` object describes which events to listen to and which actions to call.
+
+**Formats:**
+
+1. **Global event** (without room):
+   ```js
+   handlers: {
+     userCreated: 'addUser',
+     userDeleted: 'removeUser',
+   }
+   ```
+
+2. **Event with room** (required ID):
+   ```js
+   handlers: {
+     userPageUpdated: {
+       room: 'user{id}',
+       save: 'setUser',
+     },
+   }
+   ```
+
+3. **Event with optional room**:
+   ```js
+   handlers: {
+     userPageUpdated: {
+       room: 'user{?id}',
+       save: 'setUser',
+     },
+   }
+   ```
+
+4. **Multiple parameters in room**:
+   ```js
+   handlers: {
+     themeUpdated: {
+       room: 'contest{contestId}/theme{themeId}',
+       save: 'setTheme',
+     },
+   }
+   ```
+
+---
+
+### Working with ID
+
+Entity supports normalized storage: data for different IDs is stored in one slice.
+
+**Global entity (without ID):**
+```js
+const status = contestStatus(); // no parameters
+status.init();
+```
+
+**Entity with ID:**
+```js
+const user = userEntity({ id: 123 });
+user.init();
+```
+
+**Multiple ID binding:**
+```js
+const theme = themeEntity({ contestId: 1, themeId: 5 });
+theme.init(); // subscribes to room contest1/theme5
+```
+
+**Required parameters:** if `{id}` is specified in the room and ID is not passed — error `CFG-08`.
+
+**Optional parameters:** if `{?id}` is specified in the room and ID is not passed — subscription to the room is not created.
+
+---
+
+### Lifecycle Hooks (global)
+
+Hooks allow you to embed logic into key moments of Entity's operation.
+
+| Hook | When triggered | Receives |
+|------|----------------|----------|
+| `onSend` | Before sending request | `params` (ID object), `helpers` |
+| `onSave` | After receiving response, before saving | `response` (server data), `helpers` |
+| `onDone` | After successful save | `savedData` (saved data), `helpers` |
+| `onError` | On error | `error` (error object), `helpers` |
+| `onClean` | Before cleanup (last subscriber) | `helpers` |
+| `onEnd` | After cleanup (last subscriber) | `helpers` |
+
+**Example:**
+```js
+const contestStatus = createEntity({
+  name: 'contestStatus',
+  initialState,
+  reducers,
+  call: 'contest:getCurrentStatus',
+  save: 'setContestStatus',
+  handlers: {
+    contestStatusUpdated: 'setContestStatus',
+    contestStatusDeleted: 'clearContestStatus',
+  },
+  socket,
+  onSend: (params) => {
+    console.log('Requesting status', params);
+    return params;
+  },
+  onSave: (response) => {
+    console.log('Response received', response);
+    return response;
+  },
+  onError: (error) => {
+    console.error('Loading error', error);
+  },
+});
+```
+
+---
+
+### State Flags
+
+Entity automatically manages three flags:
+
+- `loading` — loading in progress.
+- `initialized` — data loaded and ready.
+- `error` — loading error.
+
+They are available via selectors:
+```js
+const { loading, error } = useSelector(selectors.selectState);
+// or
+const loading = useSelector(selectors.selectLoading);
+const error = useSelector(selectors.selectError);
+```
+
+---
+
+### Entity Lifecycle
+
+1. **View mounts** → calls `init()`.
+2. **Entity checks** flags (`initialized`, `loading`).
+3. **If no data** — sends request (`call`).
+4. **After receiving response** — saves data (via `save`) and activates subscription (handlers).
+5. **On event** — updates data via action.
+6. **View unmounts** → calls `clean()`.
+7. **Entity decreases** subscriber counter.
+8. **If counter becomes 0** — unsubscribes from events and cleans data.
+
+---
+
+### Example: global entity
+
+**state/contestStatusState.js:**
+```js
 export const initialState = {
   status: null,
   start_date: null,
   end_date: null,
-}
+};
 
 export const reducers = {
   setContestStatus: (state, action) => {
-    const { status, start_date, end_date } = action.payload
-    state.status = status
-    state.start_date = start_date
-    state.end_date = end_date
+    const { status, start_date, end_date } = action.payload;
+    state.status = status;
+    state.start_date = start_date;
+    state.end_date = end_date;
   },
   clearContestStatus: (state) => {
-    state.status = null
-    state.start_date = null
-    state.end_date = null
+    state.status = null;
+    state.start_date = null;
+    state.end_date = null;
   },
-}
+};
 ```
 
-### 4. Создайте Entity (инициализация, состояние и подписка)
-
+**entity/contestStatusEntity.js:**
 ```js
-// src/store/entity/contestStatusEntity.js
-import { createEntity } from '@us-gfecd/client'
-import { initialState, reducers } from '../state/contestStatusState'
-import { socket } from '../index'
+import { createEntity } from '@us-gfecd/client';
+import { initialState, reducers } from '../state/contestStatusState';
+import { socket } from '../index';
 
 export const contestStatus = createEntity({
   name: 'contestStatus',
   initialState,
   reducers,
   call: 'contest:getCurrentStatus',
-  save: 'setContestStatus',      // имя экшена из reducers
-  handlers: {                    // подписка на события
+  save: 'setContestStatus',
+  handlers: {
     contestStatusUpdated: 'setContestStatus',
     contestStatusDeleted: 'clearContestStatus',
   },
   socket,
-})
+});
 ```
 
-### 5. Создайте Method (действия)
-
+**view/ContestStatusView.jsx:**
 ```js
-// src/store/method/userMethod.js
-import { createMethod } from '@us-gfecd/client'
-import { userEntity } from '../entity/userEntity'
+const status = contestStatus(); // global entity
+const { init, clean, selectors } = status;
 
-const { addUser } = userEntity.actions  // экшены из entity
+useEffect(() => {
+  init();
+  return () => clean();
+}, []);
 
-export const createUser = createMethod({
-  call: 'createUser',
-  save: addUser,   // экшен-криэйтор
-})
-```
-
-### 6. Подключите в store (один слайс!)
-
-```js
-// src/store/configureStore.js
-import { configureStore } from '@reduxjs/toolkit'
-import { contestStatus } from './entity/contestStatusEntity'
-
-export const store = configureStore({
-  reducer: {
-    contestStatus: contestStatus.slice.reducer,
-  },
-})
-```
-
-### 7. Используйте в компоненте
-
-```jsx
-// src/ui/view/ContestStatusView.jsx
-import React, { useEffect } from 'react'
-import { useDispatch, useSelector } from 'react-redux'
-import { contestStatus } from '../../store/entity/contestStatusEntity'
-
-const { init, clean, selectors } = contestStatus
-
-export const ContestStatusView = () => {
-  const dispatch = useDispatch()
-  const data = useSelector(selectors.selectData)
-  const { loading, error } = useSelector(selectors.selectState)
-
-  useEffect(() => {
-    dispatch(init())
-    return () => dispatch(clean())
-  }, [dispatch])
-
-  if (loading) return <div>Loading...</div>
-  if (error) return <div>Error: {error}</div>
-  if (!data) return <div>No data</div>
-
-  return (
-    <div>
-      <p>Status: {data.status}</p>
-      <p>Start: {data.start_date}</p>
-      <p>End: {data.end_date}</p>
-    </div>
-  )
-}
+const data = useSelector(selectors.selectData);
+const loading = useSelector(selectors.selectLoading);
 ```
 
 ---
 
-## API клиента
+### Example: entity with ID and room
 
-### `createEntity({ name, initialState, reducers, call, save, handlers, socket })`
-
-Создаёт сущность с состоянием, инициализацией и встроенной подпиской.
-
-| Параметр | Тип | Описание |
-|----------|-----|----------|
-| `name` | `string` | Уникальное имя сущности (ключ в store) |
-| `initialState` | `Object` | Начальное состояние данных (без служебных полей) |
-| `reducers` | `Object` | Объект с редьюсерами для данных (экшены генерируются автоматически) |
-| `call` | `string` | Имя события Socket.IO для запроса данных |
-| `save` | `string` | Имя экшена из `reducers`, который будет вызван для сохранения данных (например, `'setData'`) |
-| `handlers` | `Object` | **Объект подписки.** Ключ — имя события, значение — имя экшена из `reducers` или объект `{ room, save }` для комнат. |
-| `socket` | `Socket` | Экземпляр сокета |
-
-**Возвращает:** `{ slice, actions, init, clean, selectors }`
-
-- `slice` — готовый reducer для подключения в store (один!)
-- `actions` — все экшены (пользовательские + служебные)
-- `init(params)` — thunk для загрузки данных. Параметры передаются в `call` и используются для подстановки в шаблоны комнат.
-- `clean()` — thunk для очистки данных и отписки (автоматически покидает комнату)
-- `selectors` — мемоизированные селекторы:
-  - `selectData` — данные сущности
-  - `selectState` — всё состояние (данные + флаги)
-  - `selectLoading`, `selectError`, `selectInitialized`
-
-**Форматы `handlers`:**
-
-1. **Глобальное событие** (без комнаты):
-
+**state/userState.js:**
 ```js
-handlers: {
-  userCreated: 'addUser',   // строка — имя экшена из entity.actions
-  usersLoaded: 'setUsers',
-}
+export const initialState = { data: null };
+
+export const reducers = {
+  setUser: (state, action) => {
+    state.data = action.payload;
+  },
+  clearUser: (state) => {
+    state.data = null;
+  },
+};
 ```
 
-2. **Событие с комнатой (статика):**
-
+**entity/userEntity.js:**
 ```js
-handlers: {
-  adminUpdated: {
-    room: 'admin',
-    save: 'updateAdmin',
-  },
-}
-```
+import { createEntity } from '@us-gfecd/client';
+import { initialState, reducers } from '../state/userState';
+import { socket } from '../index';
 
-3. **Событие с параметризованной комнатой (шаблон):**
-
-```js
-handlers: {
-  userPageUpdated: {
-    room: 'user{id}',
-    save: 'setCurrentUser',
-  },
-  userPageDeleted: {
-    room: 'user{id}',
-    save: 'clearCurrentUser',
-  },
-}
-```
-
-**Подстановка параметров:**
-- `{id}` — заменяется на `params.id` из `init(params)`
-- `{userId}` — заменяется на `params.userId`
-- Если параметр отсутствует — подставляется пустая строка
-
-**Пример с параметрами (для комнат):**
-
-```js
-const userEntity = createEntity({
+export const userEntity = createEntity({
   name: 'user',
-  initialState: { current: null },
-  reducers: { setCurrentUser: (state, action) => { state.current = action.payload } },
+  initialState,
+  reducers,
   call: 'user:getOne',
-  save: 'setCurrentUser',
+  save: 'setUser',
   handlers: {
     userPageUpdated: {
       room: 'user{id}',
-      save: 'setCurrentUser',
+      save: 'setUser',
     },
     userPageDeleted: {
       room: 'user{id}',
-      save: 'clearCurrentUser',
+      save: 'clearUser',
     },
   },
   socket,
-})
-
-// В компоненте:
-dispatch(init({ id: userId }))
-// Библиотека автоматически:
-// 1. Вызовет socket.emit('user:getOne', { id: userId })
-// 2. Подпишется на события и вступит в комнату 'user123'
+});
 ```
 
-### `createMethod({ call, save })`
-
-Создаёт thunk для отправки запросов.
-
-| Параметр | Тип | Описание |
-|----------|-----|----------|
-| `call` | `string` | Имя события Socket.IO |
-| `save` | `Function` | Экшен-криэйтор (из `entity.actions`) |
-
-**Возвращает:** thunk `(data) => dispatch => { ... }`
-
-**Пример:**
-
+**view/UserPage.jsx:**
 ```js
-import { userEntity } from '../entity/userEntity'
-const { addUser } = userEntity.actions
+const user = userEntity({ id: userId });
+const { init, clean, selectors } = user;
 
-export const createUser = createMethod({
-  call: 'createUser',
-  save: addUser,
-})
+useEffect(() => {
+  init(); // subscribes to room user:{userId}
+  return () => clean();
+}, [userId]);
+
+const data = useSelector(selectors.selectData);
 ```
 
 ---
 
-### `createSocket(config)`
+## Invoke
 
-Создаёт экземпляр Socket.IO.
+### What is Invoke?
 
+Invoke is an active call. It sends a request to the server and saves the response. Used in **Edit** components for data modification.
+
+**Difference from Entity:**
+- Entity — passive. Manages data and subscriptions.
+- Invoke — active. Executes request on user command.
+
+---
+
+### `createInvoke(config)`
+
+Creates a function for sending requests.
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `call` | `string` | Socket.IO event name. |
+| `save` | `Function` | Action creator for saving the result. |
+| `socket` | `Socket` | Socket instance. |
+| `onSend`, `onSave`, `onDone`, `onError` | `Function` | Global hooks. |
+
+**Returns:** a function `invoke(data, on, id)`.
+
+---
+
+### Signature: `invoke(data, on, id)`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `data` | `any` | Data to send (optional). |
+| `on` | `Object` | Local hooks (optional). |
+| `id` | `Object` | Identifiers for normalization (optional). |
+
+**Local hooks (`on`):**
+
+| Hook | When triggered | Receives |
+|------|----------------|----------|
+| `onSend` | Before sending | `(data, base, helpers)` |
+| `onSave` | Before saving | `(response, base, helpers)` |
+| `onDone` | After successful save | `(savedData, base, helpers)` |
+| `onError` | On error | `(error, base, helpers)` |
+
+**`base` mechanism:**
+- If local hook is defined, it can call `base()` to execute the global hook.
+- If local hook doesn't call `base()`, global hook is not executed (full override).
+- If local hook calls `base()` and there is no global hook — error `HOK-01`.
+
+---
+
+### Global and Local Hooks
+
+**Global hooks** are set in `createInvoke` and apply to all calls:
 ```js
-import { createSocket } from '@us-gfecd/client'
+const updateUser = createInvoke({
+  call: 'updateUser',
+  save: setUser,
+  socket,
+  onSend: (data) => {
+    console.log('Global onSend');
+    return data;
+  },
+});
+```
 
-const socket = createSocket({
-  url: 'https://api.example.com',
-  autoConnect: true,
-})
+**Local hooks** are passed on call and override global ones:
+```js
+await updateUser(
+  { name: 'John' },
+  {
+    onSend: (data, base) => {
+      console.log('Local onSend');
+      return base(data); // call global
+    },
+  },
+  { id: userId }
+);
 ```
 
 ---
 
-## Комнаты (Rooms) — как это работает
+### Working with ID in Invoke
 
-### Проблема
-
-Без комнат все клиенты получают все события. Если 100 клиентов смотрят 100 разных страниц, каждый получает обновления для всех страниц — это нагрузка и лишние обновления store.
-
-### Решение
-
-Используются **комнаты Socket.IO**. Клиент автоматически вступает в комнату при вызове `init({ id })` и покидает её при `clean()`.
-
-### Как это выглядит в коде
-
-**1. Описываем подписку с комнатой в `handlers`:**
+ID is passed as the third argument and is used to save data in the correct slot in the normalized storage.
 
 ```js
-// store/entity/userEntity.js
+const ids = { id: 123, roomid: 456 };
+await updateUser(
+  { name: 'Jane' },
+  null, // no local hooks
+  ids   // same ID as in Entity
+);
+```
+
+---
+
+### Example: complete scenario with Invoke
+
+**state/userState.js:**
+```js
+export const initialState = { data: null };
+
+export const reducers = {
+  setUser: (state, action) => { state.data = action.payload; },
+};
+```
+
+**entity/userEntity.js:**
+```js
 export const userEntity = createEntity({
   name: 'user',
-  initialState: { current: null },
-  reducers: { setCurrentUser: (state, action) => { state.current = action.payload } },
+  initialState,
+  reducers,
   call: 'user:getOne',
-  save: 'setCurrentUser',
+  save: 'setUser',
   handlers: {
     userPageUpdated: {
       room: 'user{id}',
-      save: 'setCurrentUser',
+      save: 'setUser',
     },
   },
   socket,
-})
+});
 ```
 
-**2. В компоненте:**
+**method/updateUser.js:**
+```js
+import { createInvoke } from '@us-gfecd/client';
+import { reducers } from '../state/userState';
 
-```jsx
-const { init, clean } = userEntity
+const { setUser } = reducers;
 
-useEffect(() => {
-  dispatch(init({ id: userId })) // Вступает в комнату 'user123'
-  return () => dispatch(clean())  // Покидает комнату 'user123'
-}, [userId])
+export const updateUser = createInvoke({
+  call: 'updateUser',
+  save: setUser,
+  socket,
+  onSend: (data) => {
+    console.log('Updating user', data);
+    return data;
+  },
+  onDone: (saved) => {
+    console.log('User updated', saved);
+  },
+});
 ```
 
-**3. Сервер отправляет событие только в комнату:**
-
-```go
-// Go-сервер
-Server.To(socket.Room("user123")).Emit("userPageUpdated", userData)
-```
-
-### Преимущества
-
-- ✅ Только нужные клиенты получают обновления
-- ✅ Меньше трафика и нагрузки
-- ✅ Автоматическое управление комнатами
-- ✅ Чистый код без ручных `join`/`leave`
-
----
-
-## Потоки данных на клиенте
-
-### Инициализация с комнатой
-
-1. View монтируется → `useEffect` вызывает `init({ id: userId })`
-2. `init` проверяет флаги (`loading`, `initialized`)
-3. Если данные не загружены → `socket.emit('user:getOne', { id: userId })`
-4. Полученные данные сохраняются через `save`
-5. Подписка (из `handlers`) активируется: вызывается `subscribe(dispatch, params)`.
-6. Клиент **вступает в комнату** `user123` (если указана комната)
-7. View отображает данные
-
-### Realtime обновление (только в комнате)
-
-1. Сервер присылает событие `userPageUpdated` в комнату `user123`
-2. Встроенная подписка вызывает экшен `setCurrentUser`
-3. Store обновляется → View перерисовывается
-4. Другие клиенты (в других комнатах) событие не получают
-
-### Деинициализация
-
-1. View размонтируется → `useEffect` вызывает `clean()`
-2. `clean` уменьшает счётчик подписчиков
-3. Если это последний компонент → отписка от событий (включая выход из комнаты)
-4. Клиент **покидает комнату** `user123`
-5. Данные очищаются
-
----
-
-# 📦 Библиотека
-
-## Установка
-
-```bash
-npm install @us-gfecd/client
-```
-
-## Peer зависимости
-
-```json
-"peerDependencies": {
-  "react": ">=18.0.0",
-  "react-redux": ">=8.0.0",
-  "socket.io-client": ">=4.5.0"
-}
+**edit/EditUserForm.jsx:**
+```js
+const handleSubmit = async (data) => {
+  await updateUser(
+    data,
+    {
+      onDone: (saved, base) => {
+        base(saved); // call global onDone
+        closeModal();
+        showNotification('User updated');
+      },
+      onError: (error) => {
+        console.error('Update error', error);
+      },
+    },
+    { id: userId } // ID for normalization
+  );
+};
 ```
 
 ---
 
-# 🖥️ Сервер (GFECD)
+## Errors
 
-Серверная часть реализована на **Go** с использованием библиотеки **`github.com/zishang520/socket.io`** — это современная реализация Socket.IO v4, обеспечивающая полную совместимость с клиентской библиотекой `socket.io-client` v4 и поддержку комнат, широковещательных рассылок, автоматического переподключения и других фич протокола.
+All library errors are instances of `UsGfecdError` and contain `code` and `context` fields with information about the occurrence location and available values.
 
-## Структура сервера
-
-```
-server/
-├── gate/           # Входной адаптер
-│   └── userGate.go
-├── flow/           # Оркестрация сценариев
-│   ├── userFlow.go
-│   └── atomic/     # Атомарные сценарии
-│       └── checkAccessFlow.go
-├── core/           # Бизнес-логика
-│   └── userCore.go
-├── db/             # Доступ к данным
-│   └── userDb.go
-└── emit/           # Исходящие события
-    └── userEmit.go
-```
-
-## Слои сервера
-
-### Gate (входной адаптер)
-
-**Назначение:** принимает запросы, проверяет авторизацию, валидирует входные данные.
-
-**Правила:**
-- Обычно Gate вызывает **один Flow** для конкретного запроса.
-- **Исключение:** Gate может вызывать **несколько Flow**, если это необходимо для маршрутизации (например, обработчик вебхуков, который направляет запросы к разным Flow в зависимости от типа данных). В таких случаях Gate выступает как диспетчер.
-- Для поддержания читаемости в сложных сценариях допускается вызов нескольких Flow из одного Gate.
-
-**Пример (один Gate → один Flow):**
-
-```go
-// gate/userGate.go
-import "github.com/zishang520/socket.io/socket"
-
-func RegisterUserHandlers(server *socket.Server) {
-    server.OnEvent("/", "user:getOne", func(s socket.Conn, params map[string]string, callback func(interface{})) {
-        user, err := flow.GetUserByID(params["id"])
-        if err != nil {
-            callback(map[string]string{"error": err.Error()})
-            return
-        }
-        callback(user)
-    })
+**Error format:**
+```js
+{
+  name: 'UsGfecdError',
+  code: 'CFG-01',
+  message: '[createEntity: user] save action "setUser" not found in reducers',
+  context: {
+    factory: 'createEntity',
+    entityName: 'user',
+    availableActions: ['setUser', 'clearUser'],
+  },
 }
 ```
 
-**Пример (один Gate → несколько Flow — Webhook):**
+### Error Codes
 
-```go
-// gate/webhookGate.go
-func WebhookHandler(w http.ResponseWriter, r *http.Request) {
-    // ... парсинг payload
-    switch payload.Collection {
-    case "contests":
-        flow.HandleContests(payload)   // вызов одного Flow
-    case "themes":
-        flow.HandleThemes(payload)     // вызов другого Flow
-    // ...
-    }
-}
-```
-
-**Разрешено:**
-- ✅ Вызывать один или несколько Flow
-- ✅ Проверять авторизацию
-- ✅ Валидировать входные данные
-- ✅ Обрабатывать `join`/`leave` для комнат
-
-**Запрещено:**
-- ❌ Содержать бизнес-логику
-- ❌ Работать с БД напрямую
-- ❌ Вызывать Emit
+| Code | Description | Context |
+|------|-------------|---------|
+| **CFG-01** | `save` action not found in `reducers`. | Entity name, available actions. |
+| **CFG-02** | `socket` not provided. | Factory (`createEntity` / `createInvoke`). |
+| **CFG-03** | `handlers` is not an object. | Entity name. |
+| **CFG-04** | `handlers` missing `save` field. | Entity name, event. |
+| **CFG-05** | Required parameter (`name` or `call`) missing. | Factory. |
+| **CFG-06** | `handlers` references action not found in `actions`. | Entity name, event, missing action, available actions. |
+| **CFG-07** | Socket URL not provided. | Factory `createSocket`. |
+| **CFG-08** | Required room parameter missing. | Entity name, parameter. |
+| **NET-01** | Connection to server lost. | – |
+| **NET-02** | Response timeout. | – |
+| **NET-03** | Server returned an error. | Factory, event, server error text. |
+| **NET-04** | Socket connection error. | – |
+| **DAT-01** | `onSave` returned primitive instead of object. | Factory, event. |
+| **DAT-02** | `onSend` returned non-object. | Factory, event. |
+| **DAT-03** | Error in `onSave`/`onSend` hook. | Factory, event, original error. |
+| **DAT-04** | `onSave` hook threw an exception. | Factory, event. |
+| **DAT-05** | Server response is not valid JSON. | – |
+| **DAT-06** | Response structure does not match expected. | – |
+| **DAT-07** | `onSave` returned `null`, saving skipped (warning). | – |
+| **SUB-01** | Attempt to subscribe without active socket. | – |
+| **SUB-02** | Error entering room. | – |
+| **SUB-03** | Error leaving room. | – |
+| **HOK-01** | Local hook called `base` but global hook not defined. | Factory, event, hook. |
+| **HOK-02** | `onSend` returned `null`, request cancelled (warning). | – |
+| **HOK-03** | `onDone` hook threw an exception. | – |
+| **HOK-04** | `onError` hook threw an exception. | – |
+| **LIF-01** | `clean` called before `init` (warning). | – |
+| **LIF-02** | `init` called again, data already loaded (warning). | – |
+| **LIF-03** | `clean` called but subscription already removed (warning). | – |
 
 ---
 
-### Flow (оркестрация)
+## License
 
-**Назначение:** координирует выполнение бизнес-процессов, управляет транзакциями.
-
-**Пример обычного Flow:**
-
-```go
-// flow/userFlow.go
-func GetUserByID(id string) (*models.User, error) {
-    user, err := db.GetUserByID(id)
-    if err != nil {
-        return nil, err
-    }
-    return user, nil
-}
-
-func CreateUser(data models.UserInput) (*models.User, error) {
-    // 1. Валидация
-    validated, err := core.ValidateUser(data)
-    if err != nil {
-        return nil, err
-    }
-
-    // 2. Сохранение в БД
-    user, err := db.CreateUser(validated)
-    if err != nil {
-        return nil, err
-    }
-
-    // 3. Отправка события в комнату
-    room := fmt.Sprintf("user:%s", user.ID)
-    emit.UserCreated(user, room)
-
-    return user, nil
-}
-```
-
-**Атомарный Flow (не вызывает другие Flow):**
-
-```go
-// flow/atomic/checkAccessFlow.go
-func CheckAccessFlow(userId, action string) error {
-    user, err := db.GetUserByID(userId)
-    if err != nil {
-        return err
-    }
-    if !user.IsAdmin {
-        return errors.New("access denied")
-    }
-    return nil
-}
-```
-
-**Разрешено:**
-- ✅ Вызывать Core, Db, Emit
-- ✅ Вызывать атомарные Flow
-- ✅ Управлять транзакциями
-
-**Запрещено:**
-- ❌ Содержать бизнес-логику (она в Core)
-- ❌ Импортировать Gate
+MIT
 
 ---
 
-### Core (чистая бизнес-логика)
-
-**Назначение:** содержит бизнес-правила, расчёты, алгоритмы. Чистые функции без побочных эффектов.
-
-**Пример:**
-
-```go
-// core/userCore.go
-func ValidateUser(data UserInput) (UserInput, error) {
-    if len(data.Name) < 2 {
-        return data, errors.New("name is too short")
-    }
-    if !strings.Contains(data.Email, "@") {
-        return data, errors.New("invalid email")
-    }
-    return data, nil
-}
-
-func CalculateAge(birthDate time.Time) int {
-    return time.Now().Year() - birthDate.Year()
-}
-```
-
-**Разрешено:**
-- ✅ Содержать бизнес-логику
-- ✅ Импортировать другие Core модули
-- ✅ Быть чистыми функциями
-
-**Запрещено:**
-- ❌ Импортировать Gate, Flow, Emit, Db
-- ❌ Работать с БД
-- ❌ Иметь побочные эффекты
-
----
-
-### Db (доступ к данным)
-
-**Назначение:** инкапсулирует доступ к БД, CRUD-операции.
-
-**Пример:**
-
-```go
-// db/userDb.go
-func GetUserByID(id string) (*models.User, error) {
-    var user models.User
-    err := DB.Where("id = ?", id).First(&user).Error
-    if errors.Is(err, gorm.ErrRecordNotFound) {
-        return nil, nil
-    }
-    return &user, err
-}
-
-func CreateUser(data models.UserInput) (*models.User, error) {
-    user := models.User{
-        Name:  data.Name,
-        Email: data.Email,
-    }
-    err := DB.Create(&user).Error
-    return &user, err
-}
-```
-
-**Разрешено:**
-- ✅ Выполнять запросы чтения/записи
-- ✅ Отвечать на вопросы (например, `isUserInRoom`)
-- ✅ Инкапсулировать структуру данных
-
-**Запрещено:**
-- ❌ Содержать бизнес-логику
-- ❌ Оркестрировать запросы (вызывать несколько методов)
-- ❌ Раскрывать внутреннюю структуру данных
-
----
-
-### Emit (исходящие события)
-
-**Назначение:** отправляет события клиентам через WebSocket.
-
-**Пример с комнатами:**
-
-```go
-// emit/userEmit.go
-import "github.com/zishang520/socket.io/socket"
-
-func UserCreated(user *models.User, room string) {
-    if Server == nil {
-        log.Println("Socket.IO server not initialized")
-        return
-    }
-    Server.To(socket.Room(room)).Emit("userPageUpdated", user)
-    log.Printf("📤 Emitted userPageUpdated to room: %s", room)
-}
-
-func UserDeleted(userID string) {
-    if Server == nil {
-        return
-    }
-    room := fmt.Sprintf("user:%s", userID)
-    Server.To(socket.Room(room)).Emit("userPageDeleted", map[string]interface{}{
-        "id":       userID,
-        "_deleted": true,
-    })
-    log.Printf("📤 Emitted userPageDeleted to room: %s", room)
-}
-```
-
-**Разрешено:**
-- ✅ Отправлять события в конкретные комнаты
-- ✅ Форматировать сообщения (JSON)
-- ✅ Обрабатывать acknowledgment
-
-**Запрещено:**
-- ❌ Содержать бизнес-логику
-- ❌ Импортировать Gate, Flow, Core, Db
-
----
-
-## Потоки данных на сервере
-
-### Запрос от клиента с комнатой
-1. Клиент вызывает `init({ id: userId })` через Socket.IO
-2. Gate принимает запрос `user:getOne` с параметрами
-3. Gate вызывает Flow → Core (валидация) → Db (чтение)
-4. Ответ возвращается через callback
-5. Клиент **вступает в комнату** `user123`
-
-### Обновление данных через Webhook
-1. Администратор изменяет данные через Directus
-2. Webhook отправляет POST-запрос на сервер
-3. Gate (обработчик вебхука) определяет тип коллекции и вызывает соответствующий Flow
-4. Flow обрабатывает вебхук: загружает свежие данные из Db и вызывает Emit
-5. Emit отправляет событие в соответствующую комнату
-6. Только клиенты в этой комнате получают обновление
-
-### Realtime событие от сервера
-1. Flow вызывает Emit
-2. Emit отправляет событие в указанную комнату
-3. Клиенты в комнате получают событие и обновляют store
-
----
-
-## Золотые правила сервера
-
-1. **Gate** → обычно один Flow, но может вызывать несколько для маршрутизации (например, вебхуки)
-2. **Flow** → Core + Db + Emit (может вызывать атомарные Flow)
-3. **Core** — только чистая логика
-4. **Db** — только данные
-5. **Emit** — только отправка, поддерживает комнаты
-6. **Комнаты** — используются для точечных обновлений
-7. **Никаких обходов слоёв** — Gate не вызывает Core напрямую, Flow не импортирует Gate и т.д.
-
-# 📦 Библиотека
-
-## Peer зависимости
-
-```json
-"peerDependencies": {
-  "react": ">=18.0.0",
-  "react-redux": ">=8.0.0",
-  "socket.io-client": ">=4.5.0"
-}
-```
-
----
-
-# 🎯 Золотые правила
-
-## Клиент
-1. **View** — только читает, вызывает `init` и `clean` через `useEffect`
-2. **Edit** — только пишет, вызывает `method`
-3. **Event** — вызывает только `update`-редьюсеры
-4. **Комнаты** — автоматические, указываются через `{ room: 'entity{id}' }`
-5. Никакой бизнес-логики на клиенте
-
-## Сервер
-1. **Gate** → обычно один Flow, но может вызывать несколько для маршрутизации (например, вебхуки)
-2. **Flow** → Core + Db + Emit (может вызывать атомарные Flow)
-3. **Core** — только чистая логика
-4. **Db** — только данные
-5. **Emit** — только отправка, поддерживает комнаты
-6. **Комнаты** — используются для точечных обновлений
-
----
-
-# 📚 Ссылки
-
-- **Библиотека:** [@us-gfecd/client](https://npmjs.com/package/@us-gfecd/client)
+**Links:**
+- [US-GFECD Architecture](https://npmjs.com/package/@us-gfecd/architecture)
+- [Repository](https://github.com/Thying/US-GFECD-client)
