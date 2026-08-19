@@ -4,7 +4,6 @@ import { createError, logWarning } from '../../errors';
 
 const DEFAULT_ID_KEY = '__default__';
 
-
 const serializeId = (id) => {
   if (id === undefined || id === null || (typeof id === 'object' && Object.keys(id).length === 0)) {
     return DEFAULT_ID_KEY;
