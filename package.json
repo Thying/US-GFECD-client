@@ -1,9 +1,6 @@
 {
   "name": "@us-gfecd/client",
   "version": "1.0.0",
-  "bin": {
-    "us-gfecd": "./bin/cli.js"
-  },
   "publishConfig": {
     "access": "public"
   },
