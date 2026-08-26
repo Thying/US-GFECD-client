@@ -312,12 +312,11 @@ export const createEntity = ({
     };
 
     // --- Мемоизированные селекторы ---
+    // selectData теперь возвращает всё состояние, включая служебные поля.
+    // Это безопасно, так как компоненты используют отдельные селекторы для loading/error.
     const selectData = createSelector(
       [selectSelf],
-      (s) => {
-        const { loading, error, initialized, ...data } = s;
-        return data;
-      }
+      (s) => s // просто возвращаем состояние целиком
     );
 
     const selectors = {
