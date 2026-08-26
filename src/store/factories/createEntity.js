@@ -311,12 +311,17 @@ export const createEntity = ({
       return sliceState[idKey] || getDefaultState();
     };
 
-    const selectors = {
-      selectData: (state) => {
-        const s = selectSelf(state);
+    // --- Мемоизированные селекторы ---
+    const selectData = createSelector(
+      [selectSelf],
+      (s) => {
         const { loading, error, initialized, ...data } = s;
         return data;
-      },
+      }
+    );
+
+    const selectors = {
+      selectData,
       selectState: selectSelf,
       selectLoading: createSelector([selectSelf], (s) => s.loading),
       selectError: createSelector([selectSelf], (s) => s.error),
