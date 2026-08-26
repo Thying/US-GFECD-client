@@ -29,12 +29,6 @@ const serializeId = (id) => {
  * @property {Function} [onEnd] – глобальный хук после очистки
  */
 
-/**
- * Создаёт сущность, объединяющую state, init, clean и подписки.
- *
- * @param {EntityConfig} config
- * @returns {Object} – объект с полями slice, actions и функцией-фабрикой (idParams) => { init, clean, selectors }
- */
 export const createEntity = ({
   name,
   initialState,
@@ -80,8 +74,10 @@ export const createEntity = ({
       delete dataState.loading;
       delete dataState.error;
       delete dataState.initialized;
-      const result = reducer(dataState, action);
-      Object.assign(localState, result);
+      // Вызываем редьюсер на копии данных
+      reducer(dataState, action);
+      // Копируем обновлённые данные обратно в localState
+      Object.assign(localState, dataState);
     };
   });
 
@@ -285,11 +281,6 @@ export const createEntity = ({
     subscription = createSubscription(resolvedHandlers);
   }
 
-  /**
-   * Фабрика для получения экземпляра сущности с конкретным ID.
-   * @param {Object} [idParams] – параметры для идентификации (например, { id: 123 })
-   * @returns {Object} – { init, clean, selectors }
-   */
   const entityInstance = (idParams = {}) => {
     const idKey = serializeId(idParams);
 
@@ -311,12 +302,12 @@ export const createEntity = ({
       return sliceState[idKey] || getDefaultState();
     };
 
-    // --- Мемоизированные селекторы ---
-    // selectData теперь возвращает всё состояние, включая служебные поля.
-    // Это безопасно, так как компоненты используют отдельные селекторы для loading/error.
     const selectData = createSelector(
       [selectSelf],
-      (s) => s // просто возвращаем состояние целиком
+      (s) => {
+        const { loading, error, initialized, ...data } = s;
+        return data;
+      }
     );
 
     const selectors = {
@@ -327,8 +318,6 @@ export const createEntity = ({
       selectInitialized: createSelector([selectSelf], (s) => s.initialized),
     };
 
-    // -----------------------------------------------------
-    // Init thunk
     const initThunk = () => async (dispatch, getState) => {
       const state = getState()[name];
       const current = state?.[idKey] || getDefaultState();
@@ -447,8 +436,6 @@ export const createEntity = ({
       }
     };
 
-    // -----------------------------------------------------
-    // Clean thunk
     const cleanThunk = () => async (dispatch, getState) => {
       const state = getState()[name];
       const current = state?.[idKey];
