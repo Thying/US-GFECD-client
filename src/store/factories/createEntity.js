@@ -187,6 +187,7 @@ export const createEntity = ({
             availableActions: available,
           });
         }
+        // Извлекаем параметры из шаблона комнаты
         if (config.room) {
           const matches = config.room.match(/\{(\??)(\w+)\}/g) || [];
           matches.forEach((match) => {
@@ -228,6 +229,7 @@ export const createEntity = ({
 
       return {
         subscribe: (dispatch, idParams = {}) => {
+          // Проверяем наличие обязательных параметров
           requiredParams.forEach((param) => {
             if (!(param in idParams)) {
               throw createError('CFG-08', `required parameter "${param}" is missing for room template`, {
@@ -241,6 +243,7 @@ export const createEntity = ({
           const entries = subscriptions.map(({ event, save, roomTemplate }) => {
             const handler = (data) => {
               const action = save(data);
+              // Передаём idParams в meta, чтобы редьюсер знал, для какого экземпляра данные
               if (action.meta && typeof action.meta === 'object') {
                 action.meta.id = idParams;
               } else {
@@ -252,6 +255,7 @@ export const createEntity = ({
 
             let room = null;
             if (roomTemplate) {
+              // Подставляем параметры в шаблон
               room = roomTemplate.replace(/\{(\??)(\w+)\}/g, (_, optional, key) => {
                 if (optional === '?') {
                   return idParams[key] !== undefined ? idParams[key] : '';
@@ -259,6 +263,8 @@ export const createEntity = ({
                 return idParams[key] !== undefined ? idParams[key] : '';
               });
               if (room) {
+                // Логируем вступление в комнату (для отладки)
+                console.log(`🔗 [${name}] Joining room: ${room}`, idParams);
                 socket.emit('join', room);
               }
             }
@@ -266,10 +272,12 @@ export const createEntity = ({
             return { event, handler, room };
           });
 
+          // Возвращаем функцию отписки
           return () => {
             entries.forEach(({ event, handler, room }) => {
               socket.off(event, handler);
               if (room) {
+                console.log(`🔗 [${name}] Leaving room: ${room}`);
                 socket.emit('leave', room);
               }
             });
